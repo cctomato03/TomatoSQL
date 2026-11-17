@@ -78,12 +78,14 @@ gh secret set APPLE_PASSWORD              --body 'abcd-efgh-ijkl-mnop'   # App �
 
 ## 5. CI 里实际发生了什么
 
-触发 `push`（或手动 `workflow_dispatch`）后，macOS job 会：
+工作流 `.github/workflows/release.yml` **只在发布 Release 时触发**（`release: types: [published]`；也可用 `workflow_dispatch` 手动重跑并指定 tag）。
+触发后，macOS job 会：
 
-1. `Detect macOS signing secrets` —— 判断证书 secret 是否存在，输出 `enabled=true/false`；
-2. **签名构建**步骤（`enabled == 'true'` 时）：`tauri-action` 把 p12 导入临时钥匙串 → 用 Developer ID 身份对 `.app` 签名（Tauri 默认开启 hardened runtime）→ 使用 `APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID` 提交公证 → 对 `.app` staple → 打 DMG 并对 DMG 也 staple；
-3. **签名校验**步骤：`codesign --verify --deep --strict`、`spctl --assess`，日志里能看到 `Authority=Developer ID Application: ...`、`TeamIdentifier=...`、`Runtime Version=...`；
-4. 上传产物（`*.dmg`）。
+1. `Sync version from tag` —— 把 `package.json` / `src-tauri/tauri.conf.json` / `Cargo.toml` 的版本号同步为 Release tag（如 `v1.2.0` → `1.2.0`），保证安装包文件名与 Release 一致；
+2. `Prepare macOS signing env` —— 判断证书 secret 是否存在，输出 `enabled=true/false`；
+3. **签名构建**步骤（`enabled == 'true'` 时）：`tauri-action` 把 p12 导入临时钥匙串 → 用 Developer ID 身份对 `.app` 签名（Tauri 默认开启 hardened runtime）→ 使用 `APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID` 提交公证 → 对 `.app` staple → 打 DMG 并对 DMG 也 staple；
+4. **签名校验**步骤：`codesign --verify --deep --strict`、`spctl --assess`，日志里能看到 `Authority=Developer ID Application: ...`、`TeamIdentifier=...`、`Runtime Version=...`；
+5. 上传产物（`*.dmg`），最后由 `publish` job 统一附加到 Release 的 Assets。
    若签名或公证失败，这一步会直接让 CI 变红 —— 不会悄悄产出坏包。
 
 ## 6. 值得注意的点

@@ -1,23 +1,66 @@
-name: Build
+name: Release
 
+# 只在「发布 Release」时构建：在 GitHub 上创建并发布 Release（或 `gh release create`）后触发，
+# 构建完成的安装包会自动追加到同一个 Release 的 Assets 里。
+# workflow_dispatch 仅用于手动重跑：填了 tag 就同样把产物挂到该 Release，留空则只构建不发布。
 on:
-  push:
-    branches: [main, master]
-    tags: ["v*"]
-  pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
-
-concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+    inputs:
+      tag:
+        description: "要附加产物的 Release tag（如 v1.0.0）；留空则只构建不发布"
+        required: false
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
 
+# 同一 tag 的发布任务串行执行，避免多平台并发上传同一个 Release 时互相覆盖
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  # 先跑测试，避免把坏包发出去
+  # 解析 tag / 版本号，决定是否需要发布
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      publish: ${{ steps.meta.outputs.publish }}
+    steps:
+      - name: Resolve tag & version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          VERSION="${TAG#v}"
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+            if [ -n "$TAG" ]; then
+              echo "::warning title=版本号::tag ($TAG) 不是语义化版本（v1.2.3），将沿用仓库里 tauri.conf.json / package.json 中的版本号"
+            fi
+          fi
+          if [ -n "$TAG" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=发布模式::将把产物附加到 Release $TAG"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=仅构建::未提供 tag，产物只作为 workflow artifact 保留"
+          fi
+
   test:
     name: Test
+    needs: prepare
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +95,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.label }})
-    needs: test
+    needs: [prepare, test]
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +111,7 @@ jobs:
             args: --bundles dmg,app
             target: aarch64-apple-darwin
             mac: true
-          # macos-13 已被 GitHub 下线；Intel 构建用 macos-15-intel（也可用 macos-26-intel）
+          # macos-13 已被 GitHub 下线；Intel 构建用 macos-15-intel
           - label: macOS (Intel)
             os: macos-15-intel
             artifact: macos-x64
@@ -107,6 +150,29 @@ jobs:
 
       - name: npm ci
         run: npm ci
+
+      # 让应用版本号与 Release tag 保持一致（安装包文件名里带的就是这个版本）
+      - name: Sync version from tag
+        if: needs.prepare.outputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const v = process.env.VERSION;
+            for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+            const cargoPath = "src-tauri/Cargo.toml";
+            const cargo = fs.readFileSync(cargoPath, "utf8")
+              .replace(/^version = "[^"]+"/m, `version = "${v}"`);
+            fs.writeFileSync(cargoPath, cargo);
+            console.log("版本号已同步为", v);
+          '
 
       # 判断仓库是否配置了 Apple 签名证书：
       # 有 → 写入签名/公证所需环境变量（供后续 tauri-action 使用），并在日志里给 notice
@@ -165,7 +231,7 @@ jobs:
         with:
           args: ${{ matrix.args }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
-      - name: Verify macOS signature (签字校验)
+      - name: Verify macOS signature (签名校验)
         if: matrix.mac && steps.signing.outputs.enabled == 'true'
         shell: bash
         run: |
@@ -175,7 +241,7 @@ jobs:
           codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime"
           spctl --assess --type execute --verbose=4 "$APP" || echo "spctl 警告：公证/捆包检查未通过时请查看上面的输出"
 
-      - name: Upload installers
+      - name: Upload installers as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tomato-sql-${{ matrix.artifact }}
@@ -187,34 +253,36 @@ jobs:
             src-tauri/target/**/release/bundle/deb/*.deb
             src-tauri/target/**/release/bundle/appimage/*.AppImage
 
-  release:
-    name: Publish release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+  # 把各平台产物汇总后附加到 Release（供用户下载）
+  publish:
+    name: Attach assets to release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: assets
+          merge-multiple: true
 
-      - name: Collect installers
-        run: |
-          mkdir -p release
-          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" \) -exec cp {} release/ \;
-          ls -lh release
+      - name: List assets
+        run: ls -lh assets
 
-      - uses: softprops/action-gh-release@v2
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          files: assets/*
+          fail_on_unmatched_files: true
           draft: false
-          generate_release_notes: true
+          prerelease: ${{ github.event.release.prerelease || false }}
 
   docker:
     name: Build & push sync server image
-    needs: test
-    if: github.event_name != 'pull_request'
+    needs: [prepare, test]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -237,9 +305,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/sync
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
 
       - name: Build and push
         uses: docker/build-push-action@v6

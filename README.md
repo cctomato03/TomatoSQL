@@ -34,7 +34,7 @@
 | 分组 + 左树右表 + 多连接 | 左侧分组树（可嵌套、可配色），右侧多标签页；可同时打开多个连接、多个表、多个查询窗口 |
 | 字号 + 主题 | 界面字号 11–18px、编辑器字号 11–22px 独立调节；**8 套内置主题**（番茄浅/深、午夜蓝、Nord、Dracula、Solarized、GitHub 浅、One Dark）即时切换 |
 | 云同步 | 自建 Docker 同步服务（`server/`）；**端到端加密**：PBKDF2(210k)+AES-GCM，服务端只见密文；支持上传 / 智能合并 / 覆盖恢复 |
-| 持续构建 | `.github/workflows/build.yml`：测试 → Windows(NSIS/MSI)、macOS(arm64+x64 DMG，**支持 Developer ID 签名 + Apple 公证**)、Ubuntu(deb/AppImage) → tag 自动发 Release → 服务端镜像推送到 GHCR。签名只需配好仓库 Secrets；未配置时自动降级为未签名构建（步骤见 `docs/MACOS-SIGNING.md`） |
+| 持续构建 | `.github/workflows/release.yml`：**仅在发布 Release 时构建**（`release: published`），测试 → Windows(NSIS/MSI)、macOS(arm64+x64 DMG，**支持 Developer ID 签名 + Apple 公证**)、Ubuntu(deb/AppImage)，产物自动附加到该 Release 供下载，服务端镜像推送到 GHCR。签名只需配好仓库 Secrets，未配置时自动降级为未签名构建（见 `docs/MACOS-SIGNING.md`、`docs/RELEASING.md`） |
 
 其它细节：表数据分页（默认 500 行/页，可切换）、点表头排序、`WHERE` 快捷筛选、**新增行 / 删除行 / 双击单元格直接改数据并批量保存**（需主键）、危险操作使用应用内确认弹窗、`Ctrl/Cmd+Enter` 执行 SQL、`F5` 重跑、结果集多标签、DDL 查看、行号、空值斜体显示。
 
@@ -162,8 +162,9 @@ TomatoSQL/
 │       ├── commands.rs      暴露给前端的 20 个命令
 │       └── tests.rs         引擎级集成测试
 ├── server/                  云同步服务（Node 零依赖 + Docker）
-├── scripts/                 图标生成、CDP 冒烟测试
-└── .github/workflows/       三平台构建 + 服务端镜像 + Release
+├── scripts/                 图标生成、CDP 冒烟测试（smoke / smoke-ui / smoke-mysql / smoke-cloud）
+├── docs/                    USAGE 使用指南 / RELEASING 发布流程 / MACOS-SIGNING 签名公证 / VERIFICATION 验证记录
+└── .github/workflows/       release.yml：仅在发布 Release 时三平台构建并把产物挂到该 Release
 ```
 
 ---
