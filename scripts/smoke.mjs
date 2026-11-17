@@ -115,7 +115,11 @@ check("Tauri IPC 可用", hasTauri);
 
 // ---- IPC：读取工作区 / 应用信息 ----
 const info = await cdp.eval(`window.__TAURI_INTERNALS__.invoke('app_info')`);
-check("invoke app_info", info && info.version === "1.0.0", JSON.stringify(info));
+check(
+  "invoke app_info",
+  info && /^\d+\.\d+\.\d+/.test(String(info.version)) && info.platform === "windows",
+  JSON.stringify(info),
+);
 
 const ws0 = await cdp.eval(`window.__TAURI_INTERNALS__.invoke('ws_load')`);
 check("invoke ws_load", ws0 && typeof ws0 === "object" && "settings" in ws0, `groups=${ws0?.groups?.length}`);

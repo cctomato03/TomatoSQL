@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "./api";
+import { invalidateConnCache } from "./explorerCache";
 import { applyTheme } from "./themes";
 import type { AppInfo, Connection, Group, Settings, TestResult, Workspace } from "./types";
 
@@ -182,6 +183,7 @@ export const useStore = create<Store>((set, get) => ({
     const ws = get().ws;
     set({ ws: { ...ws, connections: ws.connections.filter((c) => c.id !== id) } });
     api.disconnect(id).catch(() => void 0);
+    invalidateConnCache(id);
     const connected = { ...get().connected };
     delete connected[id];
     set({ connected });

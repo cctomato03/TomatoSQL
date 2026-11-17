@@ -1084,6 +1084,72 @@ textarea {
   font-size: 0.82rem;
 }
 
+/* 侧边栏内的库/表树（Navicat 风格，挂在连接节点下面）
+   注意：这里不做水平位移（用背景虚线表达层级），
+   这样"表名"与"数据库名"的左边界能严格对齐 */
+.sb-children {
+  background-image: linear-gradient(to bottom, var(--border), var(--border));
+  background-size: 1px 100%;
+  background-position: 0.14rem 0;
+  background-repeat: no-repeat;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.sb-db,
+.sb-table {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  height: 1.72rem;
+  padding: 0 0.3rem;
+  border-radius: 0.32rem;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+
+.sb-db {
+  color: var(--text);
+}
+
+.sb-table {
+  color: var(--text-2);
+}
+
+.sb-db:hover,
+.sb-table:hover {
+  background: var(--hover);
+}
+
+.sb-db.active {
+  background: var(--active);
+}
+
+.sb-table.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.obj-spacer {
+  width: 0.9rem;
+  flex: 0 0 auto;
+}
+
+.sb-tree-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.3rem 0.1rem;
+  font-size: 0.76rem;
+  color: var(--text-3);
+}
+
+.sb-tree-foot .icon-btn {
+  margin-left: auto;
+}
+
 .obj-count {
   margin-left: auto;
   font-size: 0.74rem;

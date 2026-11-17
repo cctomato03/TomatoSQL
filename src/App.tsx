@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { connectTo } from "./actions";
+import { connectTo, openQuery, openTable } from "./actions";
 import { newConnection, useStore } from "./store";
 import type { Connection, Group } from "./types";
 import { ConnectionDialog } from "./components/ConnectionDialog";
@@ -168,6 +168,9 @@ export default function App() {
             setExportPreset({ connId: conn.id, database: conn.database ?? "" })
           }
           onOpenSync={(sourceConnId) => setSyncOpen({ sourceConnId })}
+          onOpenTable={(conn, database, table) => openTable(conn, database, table)}
+          onOpenQuery={(conn, database, sql) => openQuery(conn, database, sql)}
+          onImport={(conn, database, table) => setImportPreset({ connId: conn.id, database, table })}
         />
 
         <main className="main">

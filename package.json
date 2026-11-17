@@ -1,7 +1,7 @@
 {
   "name": "tomato-sql",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "TomatoSQL - 跨平台数据库管理工具（MySQL / SQLite）",
   "license": "MIT",
   "type": "module",

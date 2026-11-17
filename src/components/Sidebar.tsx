@@ -13,11 +13,13 @@ import {
   Trash2,
   Unplug,
   Search,
+  TerminalSquare,
   Upload,
 } from "lucide-react";
 import { useStore } from "../store";
 import type { Connection, Group } from "../types";
 import { connectTo, disconnectFrom, openConnectionView } from "../actions";
+import { ConnectionExplorer } from "./ConnectionExplorer";
 import { confirmDialog } from "./confirm";
 import { ContextMenu, type MenuItemSpec } from "./ui";
 
@@ -28,6 +30,9 @@ interface Props {
   onEditGroup: (group: Group) => void;
   onOpenTransfer: (conn: Connection) => void;
   onOpenSync: (sourceConnId?: string) => void;
+  onOpenTable: (conn: Connection, database: string, table: string) => void;
+  onOpenQuery: (conn: Connection, database: string, sql?: string) => void;
+  onImport: (conn: Connection, database: string, table?: string) => void;
 }
 
 export function Sidebar({
@@ -37,6 +42,9 @@ export function Sidebar({
   onEditGroup,
   onOpenTransfer,
   onOpenSync,
+  onOpenTable,
+  onOpenQuery,
+  onImport,
 }: Props) {
   const ws = useStore((s) => s.ws);
   const connected = useStore((s) => s.connected);
@@ -49,6 +57,7 @@ export function Sidebar({
   const notify = useStore((s) => s.notify);
 
   const [filter, setFilter] = useState("");
+  const [expandedConns, setExpandedConns] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -80,9 +89,9 @@ export function Sidebar({
 
   const connMenu = (conn: Connection): MenuItemSpec[] => [
     {
-      label: connected[conn.id] ? "打开" : "连接并打开",
+      label: connected[conn.id] ? (expandedConns[conn.id] ? "收起数据库列表" : "展开数据库列表") : "连接并展开",
       icon: <Plug size={13} />,
-      onClick: () => void connectTo(conn),
+      onClick: () => void toggleConn(conn),
     },
     ...(connected[conn.id]
       ? [
@@ -169,33 +178,78 @@ export function Sidebar({
     },
   ];
 
+  /** 展开连接节点：未连接时先建立连接，再展示库/表 */
+  const toggleConn = async (conn: Connection) => {
+    const isOpen = Boolean(expandedConns[conn.id]);
+    if (isOpen) {
+      setExpandedConns((s) => ({ ...s, [conn.id]: false }));
+      return;
+    }
+    if (!connected[conn.id]) {
+      const ok = await connectTo(conn, false);
+      if (!ok) return;
+    }
+    setExpandedConns((s) => ({ ...s, [conn.id]: true }));
+  };
+
   const renderConn = (conn: Connection) => {
     const isOn = Boolean(connected[conn.id]);
     const isBusy = busy[`conn:${conn.id}`];
+    const isOpen = Boolean(expandedConns[conn.id]);
     return (
-      <div
-        key={conn.id}
-        className={`tree-row ${selectedConnId === conn.id ? "selected" : ""}`}
-        onClick={() => selectConn(conn.id)}
-        onDoubleClick={() => void connectTo(conn)}
-        onContextMenu={(e) => openMenu(e, connMenu(conn))}
-        title={`${conn.name}${conn.kind === "sqlite" ? ` · ${conn.file ?? ""}` : ` · ${conn.host ?? ""}:${conn.port ?? 3306}`}`}
-      >
-        <span className={`conn-dot ${isOn ? "on" : "off"}`} />
-        <span className="tree-label">{conn.name}</span>
-        <span className="kind-tag">{conn.kind === "mysql" ? "MY" : "SQ"}</span>
-        <button
-          className="tree-toggle"
-          title={isOn ? "断开" : "连接"}
-          onClick={(e) => {
-            e.stopPropagation();
-            void (isOn ? disconnectFrom(conn.id) : connectTo(conn));
-          }}
+      <div key={conn.id}>
+        <div
+          className={`tree-row ${selectedConnId === conn.id ? "selected" : ""}`}
+          onClick={() => selectConn(conn.id)}
+          onDoubleClick={() => void toggleConn(conn)}
+          onContextMenu={(e) => openMenu(e, connMenu(conn))}
+          title={`${conn.name}${conn.kind === "sqlite" ? ` · ${conn.file ?? ""}` : ` · ${conn.host ?? ""}:${conn.port ?? 3306}`}（双击展开/收起数据库）`}
         >
-          {isBusy ? <div className="spinner" style={{ width: "0.8rem", height: "0.8rem" }} /> : null}
-          {!isBusy &&
-            (isOn ? <Unplug size={13} /> : <Plug size={13} />)}
-        </button>
+          <span className={`obj-chev ${isOpen ? "open" : ""}`} style={{ width: "0.8rem" }}>
+            <ChevronRight size={12} />
+          </span>
+          <span className={`conn-dot ${isOn ? "on" : "off"}`} />
+          <span className="tree-label">{conn.name}</span>
+          <span className="kind-tag">{conn.kind === "mysql" ? "MY" : "SQ"}</span>
+          <button
+            className="tree-toggle"
+            title="新建查询"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenQuery(conn, "", "");
+            }}
+          >
+            <TerminalSquare size={13} />
+          </button>
+          <button
+            className="tree-toggle"
+            title={isOn ? "断开连接" : "连接"}
+            onClick={(e) => {
+              e.stopPropagation();
+              void (async () => {
+                if (isOn) {
+                  await disconnectFrom(conn.id);
+                  setExpandedConns((s) => ({ ...s, [conn.id]: false }));
+                } else {
+                  const ok = await connectTo(conn, false);
+                  if (ok) setExpandedConns((s) => ({ ...s, [conn.id]: true }));
+                }
+              })();
+            }}
+          >
+            {isBusy ? <div className="spinner" style={{ width: "0.8rem", height: "0.8rem" }} /> : null}
+            {!isBusy && (isOn ? <Unplug size={13} /> : <Plug size={13} />)}
+          </button>
+        </div>
+
+        {isOpen && (
+          <ConnectionExplorer
+            conn={conn}
+            onOpenTable={(db, t) => onOpenTable(conn, db, t)}
+            onOpenQuery={(db, sql) => onOpenQuery(conn, db, sql)}
+            onImport={(db, t) => onImport(conn, db, t)}
+          />
+        )}
       </div>
     );
   };

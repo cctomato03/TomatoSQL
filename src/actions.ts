@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { invalidateConnCache } from "./explorerCache";
 import { useStore } from "./store";
 import type { Connection } from "./types";
 
@@ -38,6 +39,7 @@ export async function disconnectFrom(connId: string) {
   } catch {
     /* 忽略断开错误 */
   }
+  invalidateConnCache(connId);
   store.setConnected(connId, null);
   store.closeTabsOfConn(connId);
 }
