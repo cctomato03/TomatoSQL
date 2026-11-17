@@ -6,9 +6,11 @@ import {
   Filter,
   Hash,
   ListOrdered,
+  Plus,
   RefreshCw,
   Save,
   Table2,
+  Trash2,
   Undo2,
   Upload,
   Code2,
@@ -18,6 +20,7 @@ import { useStore } from "../store";
 import type { Cell, ColumnInfo, Connection, IndexInfo, RowsPage } from "../types";
 import { DataGrid } from "./DataGrid";
 import { DataEmpty, Spinner } from "./panelBits";
+import { confirmDialog } from "./confirm";
 
 type SubTab = "data" | "structure" | "indexes" | "ddl";
 
@@ -49,6 +52,7 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
   const [showWhere, setShowWhere] = useState(false);
   const [edits, setEdits] = useState<Record<string, Record<string, Cell>>>({});
   const [saving, setSaving] = useState(false);
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
 
   const orderBy = sort
     ? `${quote(sort.column)} ${sort.desc ? "DESC" : "ASC"}`
@@ -178,6 +182,52 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
   const pageNo = Math.floor(offset / limit) + 1;
   const pageCount = Math.max(1, Math.ceil(total / limit));
 
+  const insertRow = async () => {
+    try {
+      const id = await api.insertDefaultRow(conn.id, database, table);
+      notify(id > 0 ? `已插入一行（主键 ${id}）` : "已插入一行", "ok");
+      await loadData();
+    } catch (e) {
+      notify(`插入失败：${e}`, "err");
+    }
+  };
+
+  const deleteRow = async () => {
+    if (!page || selectedRow == null) return;
+    if (!hasPk) {
+      notify("该表没有主键，无法定位要删除的行", "err");
+      return;
+    }
+    const row = page.rows[selectedRow];
+    const pkDesc = page.primaryKey
+      .map((name) => {
+        const idx = page.columns.findIndex((c) => c.name === name);
+        return `${name}=${row[idx] ?? "NULL"}`;
+      })
+      .join(", ");
+    if (
+      useStore.getState().ws.settings.confirmDestructive &&
+      !(await confirmDialog({ title: "删除行", message: `确定删除这一行？(${pkDesc})` }))
+    ) {
+      return;
+    }
+    try {
+      const pk = page.primaryKey.map((name) => {
+        const idx = page.columns.findIndex((c) => c.name === name);
+        return { column: name, value: idx >= 0 ? (row[idx] ?? null) : null };
+      });
+      const res = await api.applyChanges(conn.id, database, table, [
+        { action: "delete", pk, values: [] },
+      ]);
+      if (res.errors.length) notify(`删除失败：${res.errors[0]}`, "err");
+      else notify("已删除 1 行", "ok");
+      setSelectedRow(null);
+      await loadData();
+    } catch (e) {
+      notify(`删除失败：${e}`, "err");
+    }
+  };
+
   return (
     <>
       <div className="subtabbar">
@@ -223,6 +273,17 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
                 title="筛选条件"
               >
                 <Filter size={13} /> 筛选
+              </button>
+              <button className="btn sm ghost" onClick={() => void insertRow()} title="插入一行默认值记录">
+                <Plus size={13} /> 新增行
+              </button>
+              <button
+                className="btn sm ghost"
+                onClick={() => void deleteRow()}
+                disabled={selectedRow == null || !hasPk}
+                title={hasPk ? "删除选中的行" : "无主键，无法删除"}
+              >
+                <Trash2 size={13} /> 删除行
               </button>
               {showWhere && (
                 <input
@@ -273,6 +334,8 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
                 editable={hasPk}
                 dirty={dirtyKeys}
                 sortBy={sort}
+                selectedRow={selectedRow}
+                onSelectRow={setSelectedRow}
                 onSort={(col) => {
                   setSort((s) =>
                     s?.column === col ? { column: col, desc: !s.desc } : { column: col, desc: false },

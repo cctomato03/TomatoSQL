@@ -13,6 +13,7 @@ const csvPath = join(dir, "ui_users.csv");
 const cdp = await connect();
 await cdp.send("Runtime.enable");
 await cdp.send("Log.enable");
+await cdp.send("Page.enable");
 
 const mounted = await cdp.waitFor(() => cdp.eval(`Boolean(document.querySelector('.app'))`, false), 20000, "React 挂载");
 check("应用已挂载", mounted);
@@ -22,7 +23,7 @@ const seeded = await cdp.eval(`(async () => {
   const cfg = { id:'seed-tmp', name:'seed', kind:'sqlite', file:${JSON.stringify(dbPath)}, readOnly:false };
   await window.__TAURI_INTERNALS__.invoke('db_connect', { connId:'seed-tmp', cfg });
   await window.__TAURI_INTERNALS__.invoke('db_query', { connId:'seed-tmp', database:'main', maxRows:10, sql:
-    "DROP TABLE IF EXISTS ui_users; CREATE TABLE ui_users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, city TEXT, score REAL);" +
+    "DROP TABLE IF EXISTS ui_users; CREATE TABLE ui_users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, city TEXT, score REAL);" +
     "INSERT INTO ui_users(name, city, score) VALUES ('Alice','北京',95.5),('Bob','上海',88.0),('Cathy',NULL,72.25);" });
   const tables = await window.__TAURI_INTERNALS__.invoke('db_tables', { connId:'seed-tmp', database:'main' });
   await window.__TAURI_INTERNALS__.invoke('db_disconnect', { connId:'seed-tmp' });
@@ -90,6 +91,37 @@ await cdp.eval(
 await sleep(600);
 const sorted = await cdp.text(".grid tbody tr:first-child");
 check("排序生效（首行变化或请求成功）", sorted.length > 0, sorted.slice(0, 40));
+
+// ---------- 4.5 新增行 / 删除行 ----------
+check("点击「新增行」", (await cdp.clickText("新增行")) === "ok");
+const afterInsert = await cdp.waitFor(
+  async () => (await cdp.text(".content-body .pager")).includes("共 4 行"),
+  10000,
+  "新增行生效",
+);
+check("新增行成功", afterInsert, await cdp.text(".content-body .pager"));
+
+// 选中最后一行后删除
+await cdp.eval(
+  `(() => { const rows=document.querySelectorAll('.grid tbody tr'); const last=rows[rows.length-1]; last?.querySelector('td:nth-child(2)')?.click(); return rows.length; })()`,
+  false,
+);
+const rowSelected = await cdp.count(".grid tr.row-selected");
+check("行选中高亮", rowSelected === 1, `${rowSelected} 行选中`);
+check("点击「删除行」", (await cdp.clickText("删除行")) === "ok");
+const confirmUp = await cdp.waitFor(
+  async () => (await cdp.text(".dialog-head .dialog-title")).includes("删除行"),
+  8000,
+  "删除确认弹窗",
+);
+check("删除弹出应用内确认框", confirmUp, await cdp.text(".dialog-body"));
+check("确认删除", (await cdp.clickText("确定")) === "ok");
+const afterDelete = await cdp.waitFor(
+  async () => (await cdp.text(".content-body .pager")).includes("共 3 行"),
+  10000,
+  "删除行生效",
+);
+check("删除行成功", afterDelete, await cdp.text(".content-body .pager"));
 
 // ---------- 5. 结构 / 索引 / DDL 子标签 ----------
 check("切到「结构」", (await cdp.clickText("结构")) === "ok");

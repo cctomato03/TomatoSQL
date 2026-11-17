@@ -956,6 +956,16 @@ textarea {
   background: color-mix(in srgb, var(--warn) 18%, transparent) !important;
 }
 
+.grid tbody tr.row-selected td {
+  background: var(--sel) !important;
+  color: var(--sel-fg);
+}
+
+.grid tbody tr.row-selected .rowno {
+  background: var(--sel) !important;
+  color: var(--sel-fg);
+}
+
 .pager {
   display: flex;
   align-items: center;

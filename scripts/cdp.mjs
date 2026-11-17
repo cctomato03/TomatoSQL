@@ -34,6 +34,8 @@ export class CDP {
     this.id = 0;
     this.pending = new Map();
     this.events = [];
+    this.autoAcceptDialogs = true;
+    this.dialogs = [];
     this.ready = new Promise((res, rej) => {
       this.ws.onopen = () => res();
       this.ws.onerror = (e) => rej(new Error(String(e?.message ?? e)));
@@ -44,7 +46,16 @@ export class CDP {
         const { resolve, reject } = this.pending.get(msg.id);
         this.pending.delete(msg.id);
         msg.error ? reject(new Error(JSON.stringify(msg.error))) : resolve(msg.result);
-      } else if (msg.method) this.events.push(msg);
+      } else if (msg.method) {
+        this.events.push(msg);
+        // 自动确认 window.confirm 弹窗，避免测试被阻塞
+        if (msg.method === "Page.javascriptDialogOpening") {
+          this.dialogs.push(msg.params?.message ?? "");
+          if (this.autoAcceptDialogs) {
+            this.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
+          }
+        }
+      }
     };
   }
 

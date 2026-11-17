@@ -36,7 +36,7 @@
 | 云同步 | 自建 Docker 同步服务（`server/`）；**端到端加密**：PBKDF2(210k)+AES-GCM，服务端只见密文；支持上传 / 智能合并 / 覆盖恢复 |
 | 持续构建 | `.github/workflows/build.yml`：Windows(NSIS/MSI)、macOS(arm64+x64 DMG)、Ubuntu(deb/AppImage) + 服务端镜像推送到 GHCR |
 
-其它细节：表数据分页（默认 500 行/页，可切换）、点表头排序、`WHERE` 快捷筛选、**双击单元格直接改数据并批量保存**（需主键）、`Ctrl/Cmd+Enter` 执行 SQL、`F5` 重跑、结果集多标签、DDL 查看、行号、空值斜体显示。
+其它细节：表数据分页（默认 500 行/页，可切换）、点表头排序、`WHERE` 快捷筛选、**新增行 / 删除行 / 双击单元格直接改数据并批量保存**（需主键）、危险操作使用应用内确认弹窗、`Ctrl/Cmd+Enter` 执行 SQL、`F5` 重跑、结果集多标签、DDL 查看、行号、空值斜体显示。
 
 ---
 

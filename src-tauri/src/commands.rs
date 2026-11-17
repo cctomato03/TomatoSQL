@@ -150,6 +150,29 @@ pub async fn db_row_count(
     state.conn(&conn_id)?.row_count(&database, &table).await
 }
 
+/// 插入一行"全默认值"的记录，返回自增主键（用于界面的「新增行」）
+#[tauri::command]
+pub async fn db_insert_default_row(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+) -> Result<i64, String> {
+    let conn = state.conn(&conn_id)?;
+    let engine = conn.engine();
+    let table_sql = crate::db::qualified(engine, &database, &table);
+    let sql = if engine == "mysql" {
+        format!("INSERT INTO {table_sql} () VALUES ()")
+    } else {
+        format!("INSERT INTO {table_sql} DEFAULT VALUES")
+    };
+    let results = conn.query(&database, &sql, 1).await?;
+    Ok(results
+        .last()
+        .and_then(|r| r.last_insert_id)
+        .unwrap_or(0))
+}
+
 #[tauri::command]
 pub async fn db_apply_changes(
     state: State<'_, AppState>,

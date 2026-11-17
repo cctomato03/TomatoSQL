@@ -56,6 +56,8 @@ export const api = {
     call<string>("db_ddl", { connId, database, table }),
   rowCount: (connId: string, database: string, table: string) =>
     call<number>("db_row_count", { connId, database, table }),
+  insertDefaultRow: (connId: string, database: string, table: string) =>
+    call<number>("db_insert_default_row", { connId, database, table }),
 
   // 查询与数据
   query: (connId: string, database: string, sql: string, maxRows = 5000) =>

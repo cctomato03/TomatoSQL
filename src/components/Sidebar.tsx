@@ -18,6 +18,7 @@ import {
 import { useStore } from "../store";
 import type { Connection, Group } from "../types";
 import { connectTo, disconnectFrom, openConnectionView } from "../actions";
+import { confirmDialog } from "./confirm";
 import { ContextMenu, type MenuItemSpec } from "./ui";
 
 interface Props {
@@ -117,13 +118,19 @@ export function Sidebar({
       icon: <Trash2 size={13} />,
       danger: true,
       onClick: () => {
-        if (
-          !useStore.getState().ws.settings.confirmDestructive ||
-          window.confirm(`确定删除连接「${conn.name}」？该操作不可撤销。`)
-        ) {
-          removeConnection(conn.id);
-          notify(`已删除连接 ${conn.name}`, "ok");
-        }
+        void (async () => {
+          const needConfirm = useStore.getState().ws.settings.confirmDestructive;
+          const ok =
+            !needConfirm ||
+            (await confirmDialog({
+              title: "删除连接",
+              message: `确定删除连接「${conn.name}」？该操作不可撤销。`,
+            }));
+          if (ok) {
+            removeConnection(conn.id);
+            notify(`已删除连接 ${conn.name}`, "ok");
+          }
+        })();
       },
     },
   ];
@@ -147,14 +154,17 @@ export function Sidebar({
       icon: <Trash2 size={13} />,
       danger: true,
       onClick: () => {
-        const count = ws.connections.filter((c) => c.groupId === group.id).length;
-        const msg = count
-          ? `分组「${group.name}」下有 ${count} 个连接。点击“确定”删除分组并保留连接（移到根目录）。`
-          : `确定删除分组「${group.name}」？`;
-        if (!useStore.getState().ws.settings.confirmDestructive || window.confirm(msg)) {
-          removeGroup(group.id, false);
-          notify("已删除分组", "ok");
-        }
+        void (async () => {
+          const count = ws.connections.filter((c) => c.groupId === group.id).length;
+          const message = count
+            ? `分组「${group.name}」下有 ${count} 个连接。确定删除分组并保留连接（移到根目录）？`
+            : `确定删除分组「${group.name}」？`;
+          const needConfirm = useStore.getState().ws.settings.confirmDestructive;
+          if (!needConfirm || (await confirmDialog({ title: "删除分组", message }))) {
+            removeGroup(group.id, false);
+            notify("已删除分组", "ok");
+          }
+        })();
       },
     },
   ];

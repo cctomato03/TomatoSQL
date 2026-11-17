@@ -12,6 +12,8 @@ export interface GridProps {
   sortBy?: { column: string; desc: boolean } | null;
   onSort?: (column: string) => void;
   onCommit?: (rowIndex: number, column: string, value: Cell) => void;
+  onSelectRow?: (rowIndex: number) => void;
+  selectedRow?: number | null;
   emptyText?: string;
 }
 
@@ -24,6 +26,8 @@ export function DataGrid({
   sortBy,
   onSort,
   onCommit,
+  onSelectRow,
+  selectedRow,
   emptyText,
 }: GridProps) {
   const [edit, setEdit] = useState<{ r: number; c: number; value: string } | null>(null);
@@ -90,7 +94,7 @@ export function DataGrid({
         </thead>
         <tbody>
           {rows.map((row, ri) => (
-            <tr key={ri}>
+            <tr key={ri} className={selectedRow === ri ? "row-selected" : ""}>
               <td className="rowno">{ri + 1}</td>
               {columns.map((c, ci) => {
                 const value = row[ci] ?? null;
@@ -106,7 +110,10 @@ export function DataGrid({
                     ]
                       .filter(Boolean)
                       .join(" ")}
-                    onClick={() => setSel({ r: ri, c: ci })}
+                    onClick={() => {
+                      setSel({ r: ri, c: ci });
+                      onSelectRow?.(ri);
+                    }}
                     onDoubleClick={() => {
                       if (!editable) return;
                       setEdit({ r: ri, c: ci, value: value ?? "" });

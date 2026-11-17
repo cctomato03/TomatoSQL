@@ -3,6 +3,7 @@ import { Cloud, CloudDownload, CloudUpload, KeyRound, LogIn, UserPlus, Wifi } fr
 import { cloud, decryptPayload, encryptPayload, hasCrypto, type Envelope } from "../cloud";
 import { useStore } from "../store";
 import type { Connection, Group, Workspace } from "../types";
+import { confirmDialog } from "./confirm";
 import { Field, Modal } from "./ui";
 
 type Payload = { version: number; groups: Group[]; connections: Connection[]; updatedAt: number };
@@ -266,12 +267,16 @@ export function CloudDialog({ onClose }: { onClose: () => void }) {
           <button
             className="btn"
             onClick={() => {
-              if (
-                !useStore.getState().ws.settings.confirmDestructive ||
-                window.confirm("从云端恢复会覆盖当前本地连接配置，确定继续？")
-              ) {
-                void pull("overwrite");
-              }
+              void (async () => {
+                const needConfirm = useStore.getState().ws.settings.confirmDestructive;
+                const ok =
+                  !needConfirm ||
+                  (await confirmDialog({
+                    title: "从云端覆盖恢复",
+                    message: "云端配置会覆盖当前本地连接配置，确定继续？",
+                  }));
+                if (ok) void pull("overwrite");
+              })();
             }}
             disabled={!token || !passphrase || Boolean(busy)}
           >

@@ -3,6 +3,7 @@ import { connectTo } from "./actions";
 import { newConnection, useStore } from "./store";
 import type { Connection, Group } from "./types";
 import { ConnectionDialog } from "./components/ConnectionDialog";
+import { ConfirmHost } from "./components/confirm";
 import { ConnectionView } from "./components/ConnectionView";
 import { ExportDialog, type ExportPreset } from "./components/ExportDialog";
 import { GroupDialog } from "./components/GroupDialog";
@@ -190,6 +191,7 @@ export default function App() {
       </footer>
 
       <Toasts />
+      <ConfirmHost />
 
       {connDialog && (
         <ConnectionDialog

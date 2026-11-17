@@ -53,7 +53,7 @@ node scripts\smoke.mjs
 
 `scripts/smoke.mjs`（26 项）覆盖：React 挂载、顶栏/侧栏/状态栏渲染、Tauri IPC、`app_info`、`ws_load`、SQLite 连接、`db_databases/tables/columns/fetch_rows/apply_changes`、CSV 导出内容、JSON 导出合法性、CSV 导入、`db_compare`、`ws_save/ws_load` 往返、密码内存明文 + 磁盘密文、断开、主题变量注入、无前端运行时错误。
 
-`scripts/smoke-ui.mjs`（38 项）覆盖真实交互：新建连接对话框 → 保存 → 双击连接 → 对象树 → 点击表 → 数据网格/分页/NULL 显示/排序 → 结构/索引/DDL 子标签 → 新建查询并执行 → 设置里切换主题（`data-theme=midnight`、`--accent` 变更）→ 字号滑块（根字号 16px、状态栏同步）→ 设置持久化到 `workspace.json` → 新建分组 → 标签页打开/关闭。
+`scripts/smoke-ui.mjs`（46 项）覆盖真实交互：新建连接对话框 → 保存 → 双击连接 → 对象树 → 点击表 → 数据网格/分页/NULL 显示/排序 → **新增行 / 选中行 / 删除行（应用内确认弹窗）** → 结构/索引/DDL 子标签 → 新建查询并执行 → 设置里切换主题（`data-theme=midnight`、`--accent` 变更）→ 字号滑块（根字号 16px、状态栏同步）→ 设置持久化到 `workspace.json` → 新建分组 → 标签页打开/关闭。
 
 `scripts/smoke-cloud.mjs` 覆盖云同步全链路：启动本地同步服务 → 界面里注册登录 → 上传（服务端落盘只有密文，无法搜到明文密码/连接名）→ 智能合并（口令解密成功）→ 无前端错误。
 
