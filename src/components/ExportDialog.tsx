@@ -23,7 +23,7 @@ export function ExportDialog({ preset, onClose }: { preset: ExportPreset; onClos
   const [dbs, setDbs] = useState<string[]>([]);
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [picked, setPicked] = useState<string[]>(preset.tables ?? []);
-  const [format, setFormat] = useState<"csv" | "json" | "sql">("csv");
+  const [format, setFormat] = useState<"csv" | "json" | "sql">("sql");
   const [delimiter, setDelimiter] = useState(",");
   const [includeHeader, setIncludeHeader] = useState(true);
   const [includeStructure, setIncludeStructure] = useState(false);
@@ -174,9 +174,9 @@ export function ExportDialog({ preset, onClose }: { preset: ExportPreset; onClos
             value={format}
             onChange={(v) => setFormat(v)}
             options={[
+              { value: "sql", label: "SQL" },
               { value: "csv", label: "CSV" },
               { value: "json", label: "JSON" },
-              { value: "sql", label: "SQL" },
             ]}
           />
         </Field>

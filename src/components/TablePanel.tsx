@@ -21,6 +21,8 @@ import type { Cell, ColumnInfo, Connection, IndexInfo, RowsPage } from "../types
 import { DataGrid } from "./DataGrid";
 import { DataEmpty, Spinner } from "./panelBits";
 import { confirmDialog } from "./confirm";
+import { FilterBar, buildOrderBy, buildWhere, type FilterRow, type SortKey } from "./FilterBar";
+import { RowDialog } from "./RowDialog";
 
 type SubTab = "data" | "structure" | "indexes" | "ddl";
 
@@ -46,19 +48,23 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState(pageSizeSetting || 500);
   const [offset, setOffset] = useState(0);
-  const [sort, setSort] = useState<{ column: string; desc: boolean } | null>(null);
-  const [where, setWhere] = useState("");
-  const [whereApplied, setWhereApplied] = useState("");
-  const [showWhere, setShowWhere] = useState(false);
+  const [showFilter, setShowFilter] = useState(false);
+  const [filters, setFilters] = useState<FilterRow[]>([]);
+  const [sorts, setSorts] = useState<SortKey[]>([]);
+  const [whereClause, setWhereClause] = useState("");
+  const [orderBy, setOrderBy] = useState("");
   const [edits, setEdits] = useState<Record<string, Record<string, Cell>>>({});
   const [saving, setSaving] = useState(false);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const [rowDialog, setRowDialog] = useState(false);
 
-  const orderBy = sort
-    ? `${quote(sort.column)} ${sort.desc ? "DESC" : "ASC"}`
-    : page?.primaryKey?.length
-      ? page.primaryKey.map(quote).join(", ")
-      : null;
+  const activeSort = useMemo(() => {
+    const first = orderBy.split(",")[0]?.trim() ?? "";
+    if (!first) return null;
+    const m = first.match(/^`?([^`]+)`?\s+(ASC|DESC)$/i);
+    if (!m) return null;
+    return { column: m[1], desc: m[2].toUpperCase() === "DESC" };
+  }, [orderBy]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -70,8 +76,8 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
         table,
         limit,
         offset,
-        whereApplied || null,
-        orderBy,
+        whereClause || null,
+        orderBy || null,
       );
       setPage(res);
     } catch (e) {
@@ -80,7 +86,7 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
     } finally {
       setLoading(false);
     }
-  }, [conn.id, database, table, limit, offset, whereApplied, orderBy]);
+  }, [conn.id, database, table, limit, offset, whereClause, orderBy]);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -96,17 +102,22 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
   }, [conn.id, database, table, notify]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
-
-  useEffect(() => {
     void loadMeta();
     setEdits({});
     setOffset(0);
-    setSort(null);
+    setFilters([]);
+    setSorts([]);
+    setWhereClause("");
+    setOrderBy("");
+    setSelectedRow(null);
     setDdl("");
+    setShowFilter(false);
     setTab(defaultTab);
   }, [conn.id, database, table]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
   useEffect(() => {
     if (tab !== "ddl" || ddl) return;
@@ -137,10 +148,33 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
   const dirtyCount = Object.values(edits).reduce((n, cols) => n + Object.keys(cols).length, 0);
 
   const onCommit = (rowIndex: number, column: string, value: Cell) => {
-    setEdits((prev) => {
-      const next = { ...prev, [rowIndex]: { ...(prev[rowIndex] ?? {}), [column]: value } };
-      return next;
-    });
+    setEdits((prev) => ({ ...prev, [rowIndex]: { ...(prev[rowIndex] ?? {}), [column]: value } }));
+  };
+
+  const applyFilters = () => {
+    const where = buildWhere(filters);
+    const order = buildOrderBy(sorts);
+    setWhereClause(where);
+    setOrderBy(order);
+    setOffset(0);
+    notify(where || order ? "已应用排序 / 筛选条件" : "已清除排序 / 筛选条件", "ok");
+  };
+
+  const clearFilters = () => {
+    setFilters([]);
+    setSorts([]);
+    setWhereClause("");
+    setOrderBy("");
+    setOffset(0);
+  };
+
+  const sortByColumn = (column: string) => {
+    const isSame = activeSort?.column === column;
+    const desc = isSame ? !activeSort?.desc : false;
+    const next: SortKey[] = [{ id: `s-${Date.now()}`, column, desc }];
+    setSorts(next);
+    setOrderBy(buildOrderBy(next));
+    setOffset(0);
   };
 
   const saveChanges = async () => {
@@ -175,20 +209,6 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
       notify(`保存失败：${e}`, "err");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const total = page?.total ?? 0;
-  const pageNo = Math.floor(offset / limit) + 1;
-  const pageCount = Math.max(1, Math.ceil(total / limit));
-
-  const insertRow = async () => {
-    try {
-      const id = await api.insertDefaultRow(conn.id, database, table);
-      notify(id > 0 ? `已插入一行（主键 ${id}）` : "已插入一行", "ok");
-      await loadData();
-    } catch (e) {
-      notify(`插入失败：${e}`, "err");
     }
   };
 
@@ -227,6 +247,11 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
       notify(`删除失败：${e}`, "err");
     }
   };
+
+  const total = page?.total ?? 0;
+  const pageNo = Math.floor(offset / limit) + 1;
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const appliedCount = filters.filter((f) => f.column).length + sorts.filter((s) => s.column).length;
 
   return (
     <>
@@ -268,13 +293,14 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
                 <RefreshCw size={13} />
               </button>
               <button
-                className={`btn sm ghost ${showWhere ? "active" : ""}`}
-                onClick={() => setShowWhere((v) => !v)}
-                title="筛选条件"
+                className={`btn sm ghost ${showFilter ? "active" : ""}`}
+                onClick={() => setShowFilter((v) => !v)}
+                title="排序 / 筛选"
               >
-                <Filter size={13} /> 筛选
+                <Filter size={13} /> 排序 / 筛选
+                {appliedCount ? ` (${appliedCount})` : ""}
               </button>
-              <button className="btn sm ghost" onClick={() => void insertRow()} title="插入一行默认值记录">
+              <button className="btn sm ghost" onClick={() => setRowDialog(true)} title="新增一行">
                 <Plus size={13} /> 新增行
               </button>
               <button
@@ -285,21 +311,6 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
               >
                 <Trash2 size={13} /> 删除行
               </button>
-              {showWhere && (
-                <input
-                  className="input"
-                  style={{ width: "18rem", height: "1.6rem", fontSize: "0.88rem" }}
-                  placeholder="例如：status = 1 AND created_at > '2024-01-01'"
-                  value={where}
-                  onChange={(e) => setWhere(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      setOffset(0);
-                      setWhereApplied(where);
-                    }
-                  }}
-                />
-              )}
               <button
                 className="btn sm"
                 disabled={!hasPk || !dirtyCount || saving}
@@ -322,6 +333,19 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
               </span>
             </div>
 
+            {showFilter && (
+              <FilterBar
+                columns={columns}
+                filters={filters}
+                sorts={sorts}
+                onFiltersChange={setFilters}
+                onSortsChange={setSorts}
+                onApply={applyFilters}
+                onClear={clearFilters}
+                appliedHint={appliedCount ? `已应用 ${appliedCount} 项条件` : "未设置条件"}
+              />
+            )}
+
             {error ? (
               <div className="msg-line err">{error}</div>
             ) : loading ? (
@@ -333,15 +357,10 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
                 primaryKey={page.primaryKey}
                 editable={hasPk}
                 dirty={dirtyKeys}
-                sortBy={sort}
+                sortBy={activeSort}
                 selectedRow={selectedRow}
                 onSelectRow={setSelectedRow}
-                onSort={(col) => {
-                  setSort((s) =>
-                    s?.column === col ? { column: col, desc: !s.desc } : { column: col, desc: false },
-                  );
-                  setOffset(0);
-                }}
+                onSort={sortByColumn}
                 onCommit={onCommit}
                 emptyText="该表暂无数据，或筛选条件没有匹配的行。"
               />
@@ -469,10 +488,17 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
           </div>
         )}
       </div>
+
+      {rowDialog && (
+        <RowDialog
+          conn={conn}
+          database={database}
+          table={table}
+          columns={columns}
+          onClose={() => setRowDialog(false)}
+          onDone={() => void loadData()}
+        />
+      )}
     </>
   );
-}
-
-function quote(name: string) {
-  return `\`${name.replace(/`/g, "``")}\``;
 }

@@ -41,7 +41,7 @@ pub fn run() {
             commands::db_query,
             commands::db_fetch_rows,
             commands::db_row_count,
-            commands::db_insert_default_row,
+            commands::db_insert_row,
             commands::db_apply_changes,
             commands::export_data,
             commands::import_data,

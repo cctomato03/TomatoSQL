@@ -9,19 +9,20 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
 ```
-running 8 tests
+running 9 tests
 test tests::split_statements_handles_quotes_and_comments ... ok
 test tests::crypto_roundtrip ... ok
 test tests::workspace_file_encrypts_password ... ok
 test tests::sqlite_metadata_and_queries ... ok
 test tests::apply_row_changes_via_sql ... ok
+test tests::insert_row_with_values ... ok
 test tests::import_csv_without_header_uses_target_columns ... ok
 test tests::sqlite_export_and_import ... ok
 test tests::sqlite_compare_and_sync ... ok
-test result: ok. 8 passed; 0 failed
+test result: ok. 9 passed; 0 failed
 ```
 
-覆盖：SQLite 元数据（表/列/索引/DDL）、多语句拆分、分页与计数、NULL 保留、CSV/JSON/SQL 导出（含引号转义、合法 JSON）、CSV→自动建表导入、无表头导入、SQL 脚本导入、结构比较、跨文件同步与数据复制、AES-GCM 加解密、密码加密落盘/解密往返、SQL 词法拆分（引号与注释内的分号）。
+覆盖：SQLite 元数据（表/列/索引/DDL）、多语句拆分、分页与计数、NULL 保留、CSV/JSON/SQL 导出（含引号转义、合法 JSON）、CSV→自动建表导入、无表头导入、SQL 脚本导入、结构比较、跨文件同步与数据复制、AES-GCM 加解密、密码加密落盘/解密往返、INSERT 语句生成（双引擎语法 + 带值/NULL/转义 + NOT NULL 校验）、SQL 词法拆分（引号与注释内的分号）。
 
 ## 2. 云同步服务端测试（Node）
 
@@ -53,7 +54,7 @@ node scripts\smoke.mjs
 
 `scripts/smoke.mjs`（26 项）覆盖：React 挂载、顶栏/侧栏/状态栏渲染、Tauri IPC、`app_info`、`ws_load`、SQLite 连接、`db_databases/tables/columns/fetch_rows/apply_changes`、CSV 导出内容、JSON 导出合法性、CSV 导入、`db_compare`、`ws_save/ws_load` 往返、密码内存明文 + 磁盘密文、断开、主题变量注入、无前端运行时错误。
 
-`scripts/smoke-ui.mjs`（46 项）覆盖真实交互：新建连接对话框 → 保存 → 双击连接 → 对象树 → 点击表 → 数据网格/分页/NULL 显示/排序 → **新增行 / 选中行 / 删除行（应用内确认弹窗）** → 结构/索引/DDL 子标签 → 新建查询并执行 → 设置里切换主题（`data-theme=midnight`、`--accent` 变更）→ 字号滑块（根字号 16px、状态栏同步）→ 设置持久化到 `workspace.json` → 新建分组 → 标签页打开/关闭。
+`scripts/smoke-ui.mjs`（51 项）覆盖真实交互：新建连接对话框 → 保存 → 双击连接 → 对象树（**单击只选中、双击展开库/打开表、箭头旋转、表名与库名左对齐、连接后不自动展开**）→ 表在**独立标签页**打开 → 数据网格/分页/NULL 显示 → **Navicat 风格的排序/筛选面板（选字段+操作符+值，多条件 AND/OR）** → **新增行弹窗（逐列 默认值/输入/NULL）** → 删除行（应用内确认）→ 结构/索引/DDL 子标签 → 导出对话框格式顺序为 SQL/CSV/JSON → 新建查询并执行 → 设置里切换主题与字号并持久化。
 
 `scripts/smoke-cloud.mjs` 覆盖云同步全链路：启动本地同步服务 → 界面里注册登录 → 上传（服务端落盘只有密文，无法搜到明文密码/连接名）→ 智能合并（口令解密成功）→ 无前端错误。
 

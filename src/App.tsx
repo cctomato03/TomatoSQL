@@ -69,7 +69,6 @@ export default function App() {
       <ConnectionView
         conn={conn}
         engine={connected[conn.id]}
-        onExportTable={(database, table) => setExportPreset({ connId: conn.id, database, tables: [table] })}
         onImport={(database, table) => setImportPreset({ connId: conn.id, database, table })}
         onSync={() => setSyncOpen({ sourceConnId: conn.id })}
       />

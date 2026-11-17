@@ -410,6 +410,60 @@ async fn import_csv_without_header_uses_target_columns() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn insert_row_with_values() {
+    let dir = temp_dir();
+    let conn = open(&dir.join("a.db")).await;
+    conn.exec_sql("", "CREATE TABLE t3 (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, qty INTEGER);")
+        .await
+        .unwrap();
+
+    // 全默认值插入：name 是 NOT NULL 且无默认值，应当失败（界面里改成了填值弹窗）
+    let default_sql = crate::db::build_insert("sqlite", "main", "t3", &[]);
+    assert!(conn.exec_sql("main", &default_sql).await.is_err());
+
+    // 带值插入
+    let values = vec![
+        PkPair { column: "name".into(), value: Some("苹果".into()) },
+        PkPair { column: "qty".into(), value: Some("12".into()) },
+    ];
+    let sql = crate::db::build_insert("sqlite", "main", "t3", &values);
+    assert!(sql.starts_with("INSERT INTO \"t3\""), "{sql}");
+    conn.exec_sql("main", &sql).await.unwrap();
+
+    // NULL 值 + 字符串转义
+    let values = vec![
+        PkPair { column: "name".into(), value: Some("O'Reilly".into()) },
+        PkPair { column: "qty".into(), value: None },
+    ];
+    conn.exec_sql("main", &crate::db::build_insert("sqlite", "main", "t3", &values))
+        .await
+        .unwrap();
+
+    let rows = conn
+        .query("main", "SELECT name, qty FROM t3 ORDER BY id", 10)
+        .await
+        .unwrap();
+    assert_eq!(rows[0].rows.len(), 2);
+    assert_eq!(rows[0].rows[0][0].as_deref(), Some("苹果"));
+    assert_eq!(rows[0].rows[0][1].as_deref(), Some("12"));
+    assert_eq!(rows[0].rows[1][0].as_deref(), Some("O'Reilly"));
+    assert_eq!(rows[0].rows[1][1], None);
+
+    // MySQL 语法分支
+    let mysql_default = crate::db::build_insert("mysql", "db1", "t3", &[]);
+    assert_eq!(mysql_default, "INSERT INTO `db1`.`t3` () VALUES ()");
+    let mysql_vals = crate::db::build_insert(
+        "mysql",
+        "db1",
+        "t3",
+        &[PkPair { column: "name".into(), value: Some("a".into()) }],
+    );
+    assert_eq!(mysql_vals, "INSERT INTO `db1`.`t3` (`name`) VALUES ('a')");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn split_statements_handles_quotes_and_comments() {
     let sql = "SELECT ';' AS a; -- 注释里的分号;\n/* 块注释 ; */ SELECT 2;";

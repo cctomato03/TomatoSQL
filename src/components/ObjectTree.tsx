@@ -17,14 +17,14 @@ import { ContextMenu, type MenuItemSpec } from "./ui";
 
 interface Props {
   conn: Connection;
-  selected?: { database: string; table: string } | null;
   onOpenTable: (database: string, table: string) => void;
-  onOpenTableNew?: (database: string, table: string) => void;
   onOpenQuery: (database: string, sql?: string) => void;
   onImport: (database: string, table?: string) => void;
 }
 
-export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpenQuery, onImport }: Props) {
+type Selection = { kind: "db"; db: string } | { kind: "table"; db: string; table: string } | null;
+
+export function ObjectTree({ conn, onOpenTable, onOpenQuery, onImport }: Props) {
   const notify = useStore((s) => s.notify);
   const [dbs, setDbs] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -33,6 +33,7 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [sel, setSel] = useState<Selection>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItemSpec[] } | null>(null);
 
   const loadDatabases = useCallback(async () => {
@@ -41,10 +42,8 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
     try {
       const list = await api.databases(conn.id);
       setDbs(list);
-      const first = list[0];
-      if (first) {
-        setExpanded((e) => (Object.keys(e).length ? e : { [first]: true }));
-      }
+      // 不自动展开：由用户手动选择要看的数据库
+      setExpanded({});
     } catch (e) {
       setError(String(e));
     } finally {
@@ -73,25 +72,22 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
     void loadDatabases();
   }, [loadDatabases]);
 
-  useEffect(() => {
-    for (const db of Object.keys(expanded)) {
-      if (expanded[db]) void loadTables(db);
-    }
-  }, [expanded, loadTables]);
+  const toggleDb = useCallback(
+    (database: string) => {
+      setSel({ kind: "db", db: database });
+      setExpanded((s) => {
+        const next = !s[database];
+        if (next) void loadTables(database);
+        return { ...s, [database]: next };
+      });
+    },
+    [loadTables],
+  );
 
   const kw = filter.trim().toLowerCase();
 
   const tableMenu = (database: string, t: TableInfo): MenuItemSpec[] => [
-    { label: "打开数据", icon: <Table2 size={13} />, onClick: () => onOpenTable(database, t.name) },
-    ...(onOpenTableNew
-      ? [
-          {
-            label: "在新标签页打开",
-            icon: <Table2 size={13} />,
-            onClick: () => onOpenTableNew(database, t.name),
-          },
-        ]
-      : []),
+    { label: "打开数据（新标签页）", icon: <Table2 size={13} />, onClick: () => onOpenTable(database, t.name) },
     {
       label: "生成 SELECT 语句",
       icon: <TerminalSquare size={13} />,
@@ -102,6 +98,11 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
   ];
 
   const dbMenu = (database: string): MenuItemSpec[] => [
+    {
+      label: expanded[database] ? "收起数据库" : "展开数据库",
+      icon: <ChevronRight size={13} />,
+      onClick: () => toggleDb(database),
+    },
     { label: "刷新表", icon: <RefreshCw size={13} />, onClick: () => void loadTables(database, true) },
     {
       label: "新建查询",
@@ -111,7 +112,7 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
     { label: "导入 SQL 脚本", icon: <Upload size={13} />, onClick: () => onImport(database) },
   ];
 
-  const total = useMemo(
+  const totalTables = useMemo(
     () => Object.values(tables).reduce((n, list) => n + list.length, 0),
     [tables],
   );
@@ -119,9 +120,7 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
   return (
     <div className="obj-panel">
       <div className="obj-panel-head">
-        <span style={{ fontSize: "0.82rem", color: "var(--text-3)", fontWeight: 600 }}>
-          {conn.kind === "mysql" ? "数据库" : "SQLite"}
-        </span>
+        <span className="sidebar-title">{conn.kind === "mysql" ? "数据库" : "SQLite"}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: "0.1rem" }}>
           <button
             className="icon-btn"
@@ -136,6 +135,7 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
             title="刷新"
             onClick={() => {
               setTables({});
+              setSel(null);
               void loadDatabases();
             }}
             style={{ width: "1.6rem", height: "1.6rem" }}
@@ -175,29 +175,35 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
           </div>
         )}
         {dbs.map((db) => {
-          const isOpen = expanded[db];
+          const isOpen = Boolean(expanded[db]);
           const list = (tables[db] ?? []).filter((t) => !kw || t.name.toLowerCase().includes(kw));
+          const dbActive = sel?.kind === "db" && sel.db === db;
           return (
             <div className="obj-db" key={db}>
               <div
-                className="obj-db-head"
-                onClick={() => {
-                  setExpanded((s) => ({ ...s, [db]: !s[db] }));
-                  if (!isOpen) void loadTables(db);
-                }}
+                className={`obj-db-head ${dbActive ? "active" : ""}`}
+                onClick={() => setSel({ kind: "db", db })}
+                onDoubleClick={() => toggleDb(db)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenu({ x: e.clientX, y: e.clientY, items: dbMenu(db) });
                 }}
-                title={db}
+                title={`${db}（双击展开/收起）`}
               >
-                <span className={`chev ${isOpen ? "open" : ""}`} style={{ width: "0.9rem", display: "grid" }}>
-                  <ChevronRight size={12} />
+                <button
+                  className={`obj-chev ${isOpen ? "open" : ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleDb(db);
+                  }}
+                  title={isOpen ? "收起" : "展开"}
+                >
+                  <ChevronRight size={13} />
+                </button>
+                <span className="obj-ico">
+                  <Database size={13} color="var(--accent)" />
                 </span>
-                <Database size={13} color="var(--accent)" />
-                <span className="tree-label" style={{ fontSize: "0.92rem" }}>
-                  {db}
-                </span>
+                <span className="tree-label">{db}</span>
                 <span className="obj-count">
                   {loadingDb[db] ? "…" : tables[db] ? tables[db].length : ""}
                 </span>
@@ -205,31 +211,34 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
               {isOpen && (
                 <div>
                   {list.map((t) => {
-                    const active = selected?.database === db && selected?.table === t.name;
+                    const active =
+                      sel?.kind === "table" && sel.db === db && sel.table === t.name;
                     return (
                       <div
                         key={t.name}
                         className={`obj-table ${active ? "active" : ""}`}
-                        onClick={() => onOpenTable(db, t.name)}
+                        onClick={() => setSel({ kind: "table", db, table: t.name })}
+                        onDoubleClick={() => onOpenTable(db, t.name)}
                         onContextMenu={(e) => {
                           e.preventDefault();
+                          setSel({ kind: "table", db, table: t.name });
                           setMenu({ x: e.clientX, y: e.clientY, items: tableMenu(db, t) });
                         }}
-                        title={`${t.name}${t.kind === "view" ? "（视图）" : ""}`}
+                        title={`${t.name}${t.kind === "view" ? "（视图）" : ""}（双击打开数据）`}
                       >
-                        {t.kind === "view" ? (
-                          <Eye size={12} color="var(--info)" />
-                        ) : (
-                          <Table2 size={12} color="var(--text-3)" />
-                        )}
+                        <span className="obj-ico">
+                          {t.kind === "view" ? (
+                            <Eye size={12} color="var(--info)" />
+                          ) : (
+                            <Table2 size={12} color="var(--text-3)" />
+                          )}
+                        </span>
                         <span className="tree-label">{t.name}</span>
                       </div>
                     );
                   })}
                   {!list.length && !loadingDb[db] && (
-                    <div style={{ padding: "0.2rem 0.5rem 0.4rem 1.6rem", color: "var(--text-3)", fontSize: "0.82rem" }}>
-                      {tables[db] ? "无匹配的表" : "—"}
-                    </div>
+                    <div className="obj-empty">{tables[db] ? "无匹配的表" : "—"}</div>
                   )}
                 </div>
               )}
@@ -245,8 +254,10 @@ export function ObjectTree({ conn, selected, onOpenTable, onOpenTableNew, onOpen
 
       <div className="pager" style={{ borderTop: "1px solid var(--border)", borderBottom: "none" }}>
         <span>
-          {dbs.length} 库 / {total} 表
+          {dbs.length} 库 / {totalTables} 表
         </span>
+        <span className="grow" />
+        <span style={{ fontSize: "0.78rem" }}>双击表打开</span>
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

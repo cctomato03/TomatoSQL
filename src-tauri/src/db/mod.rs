@@ -414,6 +414,29 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     out
 }
 
+/// 生成 INSERT 语句：values 为空时插入一行全默认值
+pub fn build_insert(engine: &str, db: &str, table: &str, values: &[PkPair]) -> String {
+    let table_sql = qualified(engine, db, table);
+    if values.is_empty() {
+        return if engine == "mysql" {
+            format!("INSERT INTO {table_sql} () VALUES ()")
+        } else {
+            format!("INSERT INTO {table_sql} DEFAULT VALUES")
+        };
+    }
+    let cols = values
+        .iter()
+        .map(|v| quote_ident(engine, &v.column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let vals = values
+        .iter()
+        .map(|v| sql_literal(engine, &v.value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("INSERT INTO {table_sql} ({cols}) VALUES ({vals})")
+}
+
 /// 判断语句是否返回结果集
 pub fn returns_rows(sql: &str) -> bool {
     let s = sql.trim_start().to_ascii_lowercase();

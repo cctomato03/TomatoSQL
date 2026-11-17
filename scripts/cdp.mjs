@@ -130,6 +130,48 @@ export class CDP {
     );
   }
 
+  /** 设置 <select> 的值并触发 change（React 受控组件） */
+  setSelect(selector, index, value) {
+    return this.eval(
+      `(() => {
+        const el=document.querySelectorAll(${JSON.stringify(selector)})[${index}];
+        if(!el) return 'not-found';
+        el.value = ${JSON.stringify(value)};
+        el.dispatchEvent(new Event('change',{bubbles:true}));
+        return el.value === ${JSON.stringify(value)} ? 'ok' : 'mismatch:' + el.value;
+      })()`,
+      false,
+    );
+  }
+
+  /** 双击某个元素（React onDoubleClick） */
+  doubleClick(selector, textInclude = null) {
+    return this.eval(
+      `(() => {
+        const list=[...document.querySelectorAll(${JSON.stringify(selector)})];
+        const el=${textInclude === null ? "list[0]" : `list.find(e=>e.textContent.includes(${JSON.stringify(textInclude)}))`};
+        if(!el) return 'not-found';
+        el.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        return 'ok';
+      })()`,
+      false,
+    );
+  }
+
+  /** 单击包含指定文本的元素 */
+  clickSel(selector, textInclude) {
+    return this.eval(
+      `(() => {
+        const list=[...document.querySelectorAll(${JSON.stringify(selector)})];
+        const el=${textInclude === undefined ? "list[0]" : `list.find(e=>e.textContent.includes(${JSON.stringify(textInclude)}))`};
+        if(!el) return 'not-found';
+        el.click();
+        return 'ok';
+      })()`,
+      false,
+    );
+  }
+
   text(selector) {
     return this.eval(
       `document.querySelector(${JSON.stringify(selector)})?.innerText.replace(/\\s+/g,' ') ?? ''`,

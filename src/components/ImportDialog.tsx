@@ -22,7 +22,7 @@ export function ImportDialog({ preset, onClose }: { preset: ImportPreset; onClos
   const [dbs, setDbs] = useState<string[]>([]);
   const [tables, setTables] = useState<string[]>([]);
   const [table, setTable] = useState(preset.table ?? "");
-  const [format, setFormat] = useState<"csv" | "json" | "sql">("csv");
+  const [format, setFormat] = useState<"csv" | "json" | "sql">("sql");
   const [filePath, setFilePath] = useState("");
   const [hasHeader, setHasHeader] = useState(true);
   const [delimiter, setDelimiter] = useState(",");
@@ -180,9 +180,9 @@ export function ImportDialog({ preset, onClose }: { preset: ImportPreset; onClos
             value={format}
             onChange={(v) => setFormat(v)}
             options={[
+              { value: "sql", label: "SQL" },
               { value: "csv", label: "CSV" },
               { value: "json", label: "JSON" },
-              { value: "sql", label: "SQL" },
             ]}
           />
         </Field>

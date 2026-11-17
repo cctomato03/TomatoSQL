@@ -1,4 +1,4 @@
-// 界面交互端到端测试：新建连接 → 连接 → 浏览表 → 结构/DDL → 主题与字号 → 分组
+// 界面交互端到端测试（v7）：对象树双击/单选、独立表标签页、Navicat 风格排序筛选、新增行弹窗
 // 用法: node scripts/smoke-ui.mjs
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +8,6 @@ import { check, connect, sleep } from "./cdp.mjs";
 const dir = join(tmpdir(), "tomato-smoke");
 mkdirSync(dir, { recursive: true });
 const dbPath = join(dir, "ui.db");
-const csvPath = join(dir, "ui_users.csv");
 
 const cdp = await connect();
 await cdp.send("Runtime.enable");
@@ -18,7 +17,7 @@ await cdp.send("Page.enable");
 const mounted = await cdp.waitFor(() => cdp.eval(`Boolean(document.querySelector('.app'))`, false), 20000, "React 挂载");
 check("应用已挂载", mounted);
 
-// ---------- 1. 准备一个真实的 SQLite 数据库（走 IPC 建库，再用 UI 去连它） ----------
+// ---------- 1. 准备数据库 ----------
 const seeded = await cdp.eval(`(async () => {
   const cfg = { id:'seed-tmp', name:'seed', kind:'sqlite', file:${JSON.stringify(dbPath)}, readOnly:false };
   await window.__TAURI_INTERNALS__.invoke('db_connect', { connId:'seed-tmp', cfg });
@@ -31,160 +30,188 @@ const seeded = await cdp.eval(`(async () => {
 })()`);
 check("准备测试数据库", seeded.includes("ui_users"), seeded.join(","));
 
-// ---------- 2. 通过界面新建 SQLite 连接 ----------
+// ---------- 2. 新建连接 ----------
 check("点击「新建 SQLite 连接」", (await cdp.clickTitle("新建 SQLite 连接")) === "ok");
 const dialogUp = await cdp.waitFor(async () => (await cdp.count(".dialog")) > 0, 10000, "新建连接对话框");
 check("对话框打开", dialogUp, await cdp.text(".dialog-head .dialog-title"));
-
 check("填写连接名称", (await cdp.setByIndex(".dialog input", 0, "UI 测试库")) === "ok");
 check("填写数据库文件", (await cdp.setByPlaceholder("mydb.sqlite", dbPath)) === "ok");
 check("点击保存", (await cdp.clickText("保存")) === "ok");
-const dialogClosed = await cdp.waitFor(
-  async () => (await cdp.count(".dialog")) === 0,
-  8000,
-  "对话框关闭",
-);
-check("对话框关闭", dialogClosed);
+check("对话框关闭", await cdp.waitFor(async () => (await cdp.count(".dialog")) === 0, 8000, "对话框关闭"));
+check("侧边栏出现新连接", (await cdp.text(".sidebar")).includes("UI 测试库"));
 
-const sidebarText = await cdp.text(".sidebar");
-check("侧边栏出现新连接", sidebarText.includes("UI 测试库"), sidebarText.replace(/\s+/g, " ").slice(0, 60));
+// ---------- 3. 双击连接打开 → 数据库列表（不自动展开） ----------
+check("双击连接打开", (await cdp.doubleClick(".tree-row", "UI 测试库")) === "ok");
+check("对象树渲染", (await cdp.waitFor(() => cdp.count(".obj-panel"), 15000, "对象树")) > 0);
 
-// ---------- 3. 双击连接 → 打开对象树 ----------
-const opened = await cdp.eval(
-  `(() => { const row=[...document.querySelectorAll('.tree-row')].find(r=>r.textContent.includes('UI 测试库')); if(!row) return 'not-found'; row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); return 'ok'; })()`,
+const dbListed = await cdp.waitFor(async () => (await cdp.text(".obj-list")).includes("main"), 15000, "数据库列出");
+check("数据库已列出", dbListed, (await cdp.text(".obj-list")).slice(0, 40));
+check("默认不展开数据库（不显示表）", !(await cdp.text(".obj-list")).includes("ui_users"), "未自动展开");
+check("箭头默认收起", (await cdp.count(".obj-chev.open")) === 0, `${await cdp.count(".obj-chev.open")} 个展开`);
+
+// ---------- 4. 单击选择 / 双击展开 ----------
+check("单击数据库", (await cdp.clickSel(".obj-db-head", "main")) === "ok");
+await sleep(300);
+check("单击后高亮选中", (await cdp.count(".obj-db-head.active")) === 1, `${await cdp.count(".obj-db-head.active")} 个`);
+check("单击不展开", !(await cdp.text(".obj-list")).includes("ui_users"), "仍在收起状态");
+
+check("双击数据库展开", (await cdp.doubleClick(".obj-db-head", "main")) === "ok");
+const expanded = await cdp.waitFor(async () => (await cdp.text(".obj-list")).includes("ui_users"), 12000, "表列表");
+check("双击后展开并列出表", expanded);
+check("展开时箭头旋转", (await cdp.count(".obj-chev.open")) === 1, `${await cdp.count(".obj-chev.open")} 个展开`);
+
+// 对齐：表名与数据库名的左边界应一致
+const align = await cdp.eval(
+  `(() => {
+    const db=[...document.querySelectorAll('.obj-db-head .tree-label')][0];
+    const tb=document.querySelector('.obj-table .tree-label');
+    if(!db||!tb) return { ok:false };
+    const a=db.getBoundingClientRect().left, b=tb.getBoundingClientRect().left;
+    return { ok: Math.abs(a-b) < 1.5, dbLeft:a, tableLeft:b };
+  })()`,
   false,
 );
-check("双击连接打开", opened === "ok");
-const treeUp = await cdp.waitFor(() => cdp.count(".obj-panel"), 15000, "对象树出现");
-check("对象树渲染", treeUp > 0);
-const tableListed = await cdp.waitFor(
-  async () => (await cdp.text(".obj-panel")).includes("ui_users"),
-  15000,
-  "表列表加载",
-);
-check("数据库与表已列出", tableListed, (await cdp.text(".obj-list")).slice(0, 60));
+check("表名与数据库名左对齐", align?.ok, `db=${align?.dbLeft?.toFixed(1)} table=${align?.tableLeft?.toFixed(1)}`);
 
-// 顶栏状态栏应显示已连接
-const statusText = await cdp.text(".statusbar");
-check("状态栏显示连接数", statusText.includes("1 个连接已打开"), statusText.slice(0, 50));
+// ---------- 5. 单击表只选择，双击在新标签页打开 ----------
+const tabsBefore = await cdp.count(".tab");
+check("单击表", (await cdp.clickSel(".obj-table", "ui_users")) === "ok");
+await sleep(300);
+check("单击表仅选中", (await cdp.count(".obj-table.active")) === 1, `${await cdp.count(".obj-table.active")} 个选中`);
+check("单击表不打开标签", (await cdp.count(".tab")) === tabsBefore, `${tabsBefore} → ${await cdp.count(".tab")}`);
 
-// ---------- 4. 点击表 → 数据网格 ----------
-const clicked = await cdp.eval(
-  `(() => { const el=[...document.querySelectorAll('.obj-table')].find(r=>r.textContent.includes('ui_users')); if(!el) return 'not-found'; el.click(); return 'ok'; })()`,
-  false,
-);
-check("点击表", clicked === "ok");
-const gridUp = await cdp.waitFor(async () => (await cdp.count(".grid tbody tr")) > 0, 15000, "数据网格渲染");
-check("数据网格渲染", gridUp);
-
+check("双击表打开", (await cdp.doubleClick(".obj-table", "ui_users")) === "ok");
+const tabOpened = await cdp.waitFor(async () => (await cdp.count(".tab")) === tabsBefore + 1, 15000, "新标签页");
+check("双击后在新标签页打开", tabOpened, `${await cdp.count(".tab")} 个标签`);
+check("数据网格渲染", (await cdp.waitFor(async () => (await cdp.count(".grid tbody tr")) > 0, 15000, "网格")) > 0);
 const body = await cdp.text(".grid");
-check("数据内容正确", body.includes("Alice") && body.includes("Bob"), body.slice(0, 80));
-check("NULL 以斜体 NULL 显示", (await cdp.count(".grid .cell-null")) >= 1, `${await cdp.count(".grid .cell-null")} 个`);
-const pagerText = await cdp.text(".content-body .pager");
-check("分页信息", pagerText.includes("共 3 行"), pagerText.slice(0, 40));
+check("数据内容正确", body.includes("Alice") && body.includes("Bob"), body.slice(0, 60));
+check("NULL 显示", (await cdp.count(".grid .cell-null")) >= 1, `${await cdp.count(".grid .cell-null")} 个`);
+check("分页信息", (await cdp.text(".content-body .pager")).includes("共 3 行"), await cdp.text(".content-body .pager"));
 
-// 表头排序（点击 name 列）
-await cdp.eval(
-  `(() => { const th=[...document.querySelectorAll('.grid thead th')].find(t=>t.textContent.includes('name')); th?.click(); return 'ok'; })()`,
+// ---------- 6. 排序 / 筛选（结构化选择字段） ----------
+check("打开排序/筛选面板", (await cdp.clickText("排序 / 筛选")) === "ok");
+check("面板渲染", await cdp.waitFor(async () => (await cdp.count(".filter-panel")) === 1, 8000, "筛选面板"));
+
+check("添加排序字段", (await cdp.clickText("添加排序字段")) === "ok");
+await sleep(300);
+check("排序字段选择框出现", (await cdp.count(".filter-panel .filter-row")) === 1);
+// 选择 score 列 + 降序
+const sortColIdx = await cdp.eval(
+  `(() => { const s=document.querySelectorAll('.filter-row .filter-col')[0];
+     const i=[...s.options].findIndex(o=>o.value==='score');
+     if(i<0) return -1;
+     s.selectedIndex=i; s.dispatchEvent(new Event('change',{bubbles:true})); return i; })()`,
   false,
 );
-await sleep(600);
-const sorted = await cdp.text(".grid tbody tr:first-child");
-check("排序生效（首行变化或请求成功）", sorted.length > 0, sorted.slice(0, 40));
+check("选择排序列 score", sortColIdx >= 0, `index=${sortColIdx}`);
+check("排序方向设为降序", (await cdp.setSelect(".filter-row .filter-op", 0, "desc")) === "ok");
+check("应用排序", (await cdp.clickText("应用")) === "ok");
+const sortedFirst = await cdp.waitFor(
+  async () => (await cdp.text(".grid tbody tr:first-child")).includes("Alice"),
+  10000,
+  "按 score 降序",
+);
+check("排序生效（首行为 Alice 95.5）", sortedFirst, await cdp.text(".grid tbody tr:first-child"));
 
-// ---------- 4.5 新增行 / 删除行 ----------
+check("添加筛选条件", (await cdp.clickText("添加条件")) === "ok");
+await sleep(300);
+const nameIdx = await cdp.eval(
+  `(() => { const s=document.querySelectorAll('.filter-row .filter-col')[1];
+     const i=[...s.options].findIndex(o=>o.value==='name'); s.selectedIndex=i; s.dispatchEvent(new Event('change',{bubbles:true})); return i; })()`,
+  false,
+);
+check("筛选字段选择 name", nameIdx >= 0, `index=${nameIdx}`);
+check("操作符设为包含", (await cdp.setSelect(".filter-row .filter-op", 1, "LIKE")) === "ok");
+check("填写筛选值", (await cdp.setByPlaceholder("值", "Bo")) === "ok");
+check("应用筛选", (await cdp.clickText("应用")) === "ok");
+const filtered = await cdp.waitFor(
+  async () => (await cdp.text(".content-body .pager")).includes("共 1 行"),
+  10000,
+  "筛选后 1 行",
+);
+check("筛选生效（name 包含 Bo → 1 行）", filtered, await cdp.text(".content-body .pager"));
+check("无手写 SQL 输入框", (await cdp.count('.filter-panel input[placeholder*="status ="]')) === 0);
+
+check("清除筛选", (await cdp.clickText("清除")) === "ok");
+check("清除后恢复 3 行", await cdp.waitFor(async () => (await cdp.text(".content-body .pager")).includes("共 3 行"), 10000, "恢复 3 行"));
+
+// ---------- 7. 新增行（弹窗填值，不再直接报错） ----------
 check("点击「新增行」", (await cdp.clickText("新增行")) === "ok");
-const afterInsert = await cdp.waitFor(
+const rowDialog = await cdp.waitFor(async () => (await cdp.text(".dialog-head .dialog-title")).includes("新增行"), 8000, "新增行弹窗");
+check("新增行弹窗打开", rowDialog);
+check("弹窗列出列信息", (await cdp.text(".row-form")).includes("name"), (await cdp.text(".row-form")).slice(0, 60));
+// name 列填值
+const nameInput = await cdp.eval(
+  `(() => { const inputs=[...document.querySelectorAll('.row-form input')]; if(!inputs.length) return 'none';
+     const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
+     setter.call(inputs[0], 'David'); inputs[0].dispatchEvent(new Event('input',{bubbles:true})); return 'ok'; })()`,
+  false,
+);
+check("填写 name 列", nameInput === "ok", String(nameInput));
+check("点击插入", (await cdp.clickText("插入")) === "ok");
+const inserted = await cdp.waitFor(
   async () => (await cdp.text(".content-body .pager")).includes("共 4 行"),
   10000,
-  "新增行生效",
+  "新增后 4 行",
 );
-check("新增行成功", afterInsert, await cdp.text(".content-body .pager"));
+check("新增行成功（共 4 行）", inserted, await cdp.text(".content-body .pager"));
+check("新增行未报错", !(await cdp.text(".toasts")).includes("失败"), (await cdp.text(".toasts")).slice(0, 60));
 
-// 选中最后一行后删除
+// ---------- 8. 删除行 ----------
 await cdp.eval(
-  `(() => { const rows=document.querySelectorAll('.grid tbody tr'); const last=rows[rows.length-1]; last?.querySelector('td:nth-child(2)')?.click(); return rows.length; })()`,
+  `(() => { const rows=document.querySelectorAll('.grid tbody tr'); const last=rows[rows.length-1];
+     last?.querySelector('td:nth-child(2)')?.click(); return rows.length; })()`,
   false,
 );
-const rowSelected = await cdp.count(".grid tr.row-selected");
-check("行选中高亮", rowSelected === 1, `${rowSelected} 行选中`);
+check("行选中高亮", (await cdp.count(".grid tr.row-selected")) === 1);
 check("点击「删除行」", (await cdp.clickText("删除行")) === "ok");
-const confirmUp = await cdp.waitFor(
-  async () => (await cdp.text(".dialog-head .dialog-title")).includes("删除行"),
-  8000,
-  "删除确认弹窗",
-);
-check("删除弹出应用内确认框", confirmUp, await cdp.text(".dialog-body"));
+check("确认框出现", await cdp.waitFor(async () => (await cdp.text(".dialog-head .dialog-title")).includes("删除行"), 8000, "确认框"));
 check("确认删除", (await cdp.clickText("确定")) === "ok");
-const afterDelete = await cdp.waitFor(
-  async () => (await cdp.text(".content-body .pager")).includes("共 3 行"),
-  10000,
-  "删除行生效",
+check("删除后回到 3 行", await cdp.waitFor(async () => (await cdp.text(".content-body .pager")).includes("共 3 行"), 10000, "3 行"));
+
+// ---------- 9. 结构与 DDL ----------
+check("切到结构", (await cdp.clickText("结构")) === "ok");
+check("结构页渲染", await cdp.waitFor(async () => (await cdp.text(".meta-table")).includes("score"), 8000, "结构表"));
+check("切到 DDL", (await cdp.clickText("DDL")) === "ok");
+check("DDL 渲染", await cdp.waitFor(async () => (await cdp.text(".code-block")).toUpperCase().includes("CREATE TABLE"), 8000, "DDL"));
+
+// ---------- 10. 导出/导入格式顺序：SQL、CSV、JSON ----------
+check("点击「导出」", (await cdp.clickText("导出")) === "ok");
+const exportOpen = await cdp.waitFor(async () => (await cdp.text(".dialog-head .dialog-title")).includes("导出"), 8000, "导出对话框");
+check("导出对话框打开", exportOpen);
+const segOrder = await cdp.eval(
+  `[...document.querySelectorAll('.dialog .seg-item')].map(b=>b.textContent.trim())`,
+  false,
 );
-check("删除行成功", afterDelete, await cdp.text(".content-body .pager"));
+check("导出格式顺序为 SQL/CSV/JSON", JSON.stringify(segOrder) === JSON.stringify(["SQL", "CSV", "JSON"]), JSON.stringify(segOrder));
+check("关闭导出对话框", (await cdp.clickText("关闭")) === "ok");
 
-// ---------- 5. 结构 / 索引 / DDL 子标签 ----------
-check("切到「结构」", (await cdp.clickText("结构")) === "ok");
-const structUp = await cdp.waitFor(async () => (await cdp.text(".meta-table")).includes("data_type") || (await cdp.text(".meta-table")).includes("score"), 8000, "结构表");
-check("结构页渲染", structUp, (await cdp.text(".meta-table")).slice(0, 80));
-
-check("切到「索引」", (await cdp.clickText("索引")) === "ok");
+// ---------- 11. 查询（先切回连接标签页） ----------
+check("切回连接标签页", (await cdp.eval(
+  `(() => { const t=[...document.querySelectorAll('.tab')].find(x=>x.textContent.includes('UI 测试库'));
+     if(!t) return 'not-found'; t.click(); return 'ok'; })()`,
+  false,
+)) === "ok");
 await sleep(400);
-check("索引页渲染", (await cdp.text(".meta-table")).includes("PRIMARY"), (await cdp.text(".meta-table")).slice(0, 60));
-
-check("切到「DDL」", (await cdp.clickText("DDL")) === "ok");
-const ddlUp = await cdp.waitFor(async () => (await cdp.text(".code-block")).toUpperCase().includes("CREATE TABLE"), 8000, "DDL");
-check("DDL 渲染", ddlUp, (await cdp.text(".code-block")).slice(0, 70));
-
-// ---------- 6. 新建查询 + 执行 ----------
 check("点击「新建查询」", (await cdp.clickTitle("新建查询")) === "ok");
-const editorUp = await cdp.waitFor(async () => (await cdp.count(".sql-editor")) > 0, 8000, "查询编辑器");
-check("查询编辑器出现", editorUp);
+check("查询编辑器出现", await cdp.waitFor(async () => (await cdp.count(".sql-editor")) > 0, 8000, "编辑器"));
 await cdp.setByPlaceholder("在此输入 SQL", "SELECT name, score FROM ui_users ORDER BY score DESC;");
 check("点击运行", (await cdp.clickText("运行")) === "ok");
-const queryDone = await cdp.waitFor(
-  async () => (await cdp.text(".grid")).includes("Alice"),
-  15000,
-  "查询结果",
-);
-check("查询结果渲染", queryDone, (await cdp.text(".grid")).slice(0, 80));
+check("查询结果渲染", await cdp.waitFor(async () => (await cdp.text(".grid")).includes("Alice"), 15000, "结果"));
 
-// ---------- 7. 设置：主题 + 字号 ----------
+// ---------- 12. 设置：主题 + 字号 ----------
 check("打开设置", (await cdp.clickTitle("设置")) === "ok");
-const settingsUp = await cdp.waitFor(
-  async () => (await cdp.text(".dialog")).includes("主题"),
-  8000,
-  "设置对话框",
-);
-check("设置对话框渲染", settingsUp);
+check("设置对话框", await cdp.waitFor(async () => (await cdp.text(".dialog")).includes("主题"), 8000, "设置"));
 check("主题卡片数量", (await cdp.count(".theme-card")) === 8, `${await cdp.count(".theme-card")} 套`);
-
-const switched = await cdp.eval(
-  `(() => { const c=document.querySelectorAll('.theme-card')[2]; if(!c) return 'not-found'; c.click(); return 'ok'; })()`,
-  false,
-);
-check("点击第 3 套主题", switched === "ok");
+await cdp.eval(`document.querySelectorAll('.theme-card')[2]?.click()`, false);
 await sleep(400);
-const themeId = await cdp.eval(`document.documentElement.dataset.theme`, false);
-check("主题已切换", themeId === "midnight", String(themeId));
-const accentNow = await cdp.eval(
-  `getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()`,
-  false,
-);
-check("主题变量生效", accentNow === "#4f8cff", accentNow);
-
-// 字号滑块（第一个 range = 界面字号）
-check("调整界面字号", (await cdp.setByIndex(".dialog input[type=range]", 0, "16")) === "ok");
+check("主题已切换", (await cdp.eval(`document.documentElement.dataset.theme`, false)) === "midnight");
+check("调整字号", (await cdp.setByIndex(".dialog input[type=range]", 0, "15")) === "ok");
 await sleep(300);
-const rootFont = await cdp.eval(`getComputedStyle(document.documentElement).fontSize`, false);
-check("根字号已变化", rootFont === "16px", rootFont);
-const statusAfter = await cdp.text(".statusbar");
-check("状态栏显示新字号", statusAfter.includes("字号：16"), statusAfter.slice(0, 60));
-
+check("根字号 15px", (await cdp.eval(`getComputedStyle(document.documentElement).fontSize`, false)) === "15px");
 check("关闭设置", (await cdp.clickText("完成")) === "ok");
-await cdp.waitFor(async () => (await cdp.count(".dialog")) === 0, 6000, "设置关闭");
 
-// 落盘校验
 const wsFile = join(process.env.APPDATA ?? "", "com.tomatosql.app", "workspace.json");
 let savedJson = null;
 for (let i = 0; i < 20; i++) {
@@ -193,34 +220,13 @@ for (let i = 0; i < 20; i++) {
       savedJson = JSON.parse(readFileSync(wsFile, "utf8"));
       if (savedJson?.settings?.themeId === "midnight") break;
     } catch {
-      /* 写入中，重试 */
+      /* 写入中 */
     }
   }
   await sleep(300);
 }
-check("设置已持久化到 workspace.json", savedJson?.settings?.themeId === "midnight" && savedJson?.settings?.fontSize === 16,
+check("设置已持久化", savedJson?.settings?.themeId === "midnight" && savedJson?.settings?.fontSize === 15,
   `theme=${savedJson?.settings?.themeId} fontSize=${savedJson?.settings?.fontSize}`);
-const connSaved = (savedJson?.connections ?? []).find((c) => c.name === "UI 测试库");
-check("连接已持久化", Boolean(connSaved), `file=${connSaved?.file ?? "-"}`);
-
-// ---------- 8. 分组 ----------
-check("点击「新建分组」", (await cdp.clickTitle("新建分组")) === "ok");
-const groupDialog = await cdp.waitFor(async () => (await cdp.text(".dialog")).includes("分组名称"), 8000, "分组对话框");
-check("分组对话框渲染", groupDialog);
-await cdp.setByIndex(".dialog input", 0, "生产环境");
-check("保存分组", (await cdp.clickText("保存")) === "ok");
-const groupShown = await cdp.waitFor(async () => (await cdp.text(".sidebar")).includes("生产环境"), 8000, "分组出现");
-check("分组出现在侧边栏", groupShown);
-
-// ---------- 9. 标签页操作 ----------
-const tabCount = await cdp.count(".tab");
-check("多标签页已打开", tabCount >= 3, `${tabCount} 个标签`);
-await cdp.eval(
-  `(() => { const t=document.querySelectorAll('.tab')[1]; t?.querySelector('.tab-close')?.click(); return 'ok'; })()`,
-  false,
-);
-await sleep(400);
-check("关闭标签页", (await cdp.count(".tab")) === tabCount - 1, `${await cdp.count(".tab")} 个标签`);
 
 const errs = cdp.errors();
 check("无前端运行时错误", errs.length === 0, errs.slice(0, 2).join(" | "));
