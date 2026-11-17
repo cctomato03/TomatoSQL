@@ -1,0 +1,26 @@
+# Docker 构建上下文排除项
+node_modules
+npm-debug.log*
+yarn-error.log*
+
+# 本地运行产生的数据与日志（绝不能打进镜像）
+data
+*.log
+
+# 测试与文档无需进镜像
+test
+README.md
+.gitignore
+.dockerignore
+docker-compose.yml
+
+# 版本控制与编辑器杂项
+.git
+.git*
+.vscode
+.idea
+*.iml
+.DS_Store
+Thumbs.db
+.env
+.env.*

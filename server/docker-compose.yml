@@ -1,0 +1,38 @@
+# TomatoSQL 云同步服务端（Docker Compose）
+#
+# 使用步骤：
+#   1. 在 server/ 目录下创建 .env 文件，写入 TOKEN_SECRET（生成方法：openssl rand -hex 32）
+#   2. docker compose up -d
+#   3. 客户端「云同步」里填写 http://<服务器IP>:8787 或 https://your-domain
+services:
+  tomato-sql-sync:
+    build: .
+    image: tomato-sql-sync:1.0.0
+    container_name: tomato-sql-sync
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      DATA_DIR: /data
+      # 必须显式提供，未设置时 compose 会直接报错退出（避免误用随机密钥）
+      TOKEN_SECRET: ${TOKEN_SECRET:?请设置TOKEN_SECRET}
+      # token 有效期（天），可选
+      TOKEN_TTL_DAYS: "30"
+      # 放在反向代理（Caddy/Nginx）后面时建议开启，让限流按真实 IP 计数
+      TRUST_PROXY: "1"
+    volumes:
+      # 具名卷：所有用户与密文都在这里，备份此卷即可
+      - tomato-sql-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/api/health').then(function(r){return r.json()}).then(function(j){process.exit(j&&j.ok?0:1)}).catch(function(){process.exit(1)})"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  tomato-sql-data:
