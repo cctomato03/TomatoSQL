@@ -16,6 +16,13 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
+# 签名材料（证书私钥，绝不能提交）
+*.p12
+*.pfx
+*.b64
+*.cer
+*.mobileprovision
+
 # 云同步服务端数据
 server/data/
 server/.env

@@ -34,7 +34,7 @@
 | 分组 + 左树右表 + 多连接 | 左侧分组树（可嵌套、可配色），右侧多标签页；可同时打开多个连接、多个表、多个查询窗口 |
 | 字号 + 主题 | 界面字号 11–18px、编辑器字号 11–22px 独立调节；**8 套内置主题**（番茄浅/深、午夜蓝、Nord、Dracula、Solarized、GitHub 浅、One Dark）即时切换 |
 | 云同步 | 自建 Docker 同步服务（`server/`）；**端到端加密**：PBKDF2(210k)+AES-GCM，服务端只见密文；支持上传 / 智能合并 / 覆盖恢复 |
-| 持续构建 | `.github/workflows/build.yml`：Windows(NSIS/MSI)、macOS(arm64+x64 DMG)、Ubuntu(deb/AppImage) + 服务端镜像推送到 GHCR |
+| 持续构建 | `.github/workflows/build.yml`：测试 → Windows(NSIS/MSI)、macOS(arm64+x64 DMG，**支持 Developer ID 签名 + Apple 公证**)、Ubuntu(deb/AppImage) → tag 自动发 Release → 服务端镜像推送到 GHCR。签名只需配好仓库 Secrets；未配置时自动降级为未签名构建（步骤见 `docs/MACOS-SIGNING.md`） |
 
 其它细节：表数据分页（默认 500 行/页，可切换）、点表头排序、`WHERE` 快捷筛选、**新增行 / 删除行 / 双击单元格直接改数据并批量保存**（需主键）、危险操作使用应用内确认弹窗、`Ctrl/Cmd+Enter` 执行 SQL、`F5` 重跑、结果集多标签、DDL 查看、行号、空值斜体显示。
 
@@ -104,6 +104,34 @@ curl http://localhost:8787/api/health
 可选操作：`上传本地配置到云端` / `智能合并云端`（按 `updatedAt` 取新）/`从云端覆盖恢复`。
 
 > ⚠️ 同步口令一旦忘记，云端密文无法恢复；服务端也只有密文，无法帮你找回。
+
+---
+
+## macOS 签名与公证（CI 已接好）
+
+macOS 分发必须是「Developer ID 签名 + Apple 公证」，否则用户首次打开会被 Gatekeeper 拦下。工作流已内置，只需往仓库加 6 个 Secret：
+
+| Secret | 内容 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | `Developer ID Application` 证书导出 `.p12` 后的 **base64** |
+| `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设置的密码 |
+| `APPLE_SIGNING_IDENTITY` | 可选，如 `Developer ID Application: Your Name (AB12CD34EF)` |
+| `APPLE_ID` | Apple ID 邮箱（用于公证） |
+| `APPLE_PASSWORD` | **App 专用密码**（不是登录密码） |
+| `APPLE_TEAM_ID` | 10 位 Team ID |
+
+```bash
+gh secret set APPLE_CERTIFICATE          < cert.p12.b64
+gh secret set APPLE_CERTIFICATE_PASSWORD --body 'p12密码'
+gh secret set APPLE_SIGNING_IDENTITY     --body 'Developer ID Application: Your Name (AB12CD34EF)'
+gh secret set APPLE_ID                   --body 'you@example.com'
+gh secret set APPLE_PASSWORD             --body 'abcd-efgh-ijkl-mnop'
+gh secret set APPLE_TEAM_ID              --body 'AB12CD34EF'
+```
+
+* 配好后 CI 会自动：导入证书 → 签名（hardened runtime）→ 公证 → staple 到 `.app` 与 `.dmg` → 跑 `codesign --verify` / `spctl --assess` 校验；**签名或公证失败会让 job 变红**，不会产出坏包。
+* 没配（含来自 fork 的 PR）→ 自动走未签名构建，CI 依然绿，日志里有 `::warning` 提示。
+* 需要付费的 Apple Developer Program（99 USD/年）；证书创建、App 专用密码、排错表全部细节见 **[docs/MACOS-SIGNING.md](docs/MACOS-SIGNING.md)**。
 
 ---
 

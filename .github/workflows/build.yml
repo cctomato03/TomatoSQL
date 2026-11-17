@@ -11,6 +11,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   # 先跑测试，避免把坏包发出去
   test:
@@ -56,22 +59,27 @@ jobs:
         include:
           - label: Windows x64
             os: windows-latest
-            args: --bundles nsis,msi
             artifact: windows-x64
+            args: --bundles nsis,msi
+            mac: false
           - label: macOS (Apple Silicon)
             os: macos-latest
-            args: --bundles dmg,app
             artifact: macos-arm64
-            target: aarch64-apple-darwin
-          - label: macOS (Intel)
-            os: macos-13
             args: --bundles dmg,app
+            target: aarch64-apple-darwin
+            mac: true
+          # macos-13 已被 GitHub 下线；Intel 构建用 macos-15-intel（也可用 macos-26-intel）
+          - label: macOS (Intel)
+            os: macos-15-intel
             artifact: macos-x64
+            args: --bundles dmg,app
             target: x86_64-apple-darwin
+            mac: true
           - label: Ubuntu 22.04
             os: ubuntu-22.04
-            args: --bundles deb,appimage
             artifact: linux-x64
+            args: --bundles deb,appimage
+            mac: false
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -100,15 +108,72 @@ jobs:
       - name: npm ci
         run: npm ci
 
-      - name: Build app
+      # 判断仓库是否配置了 Apple 签名证书：
+      # 有 → 写入签名/公证所需环境变量（供后续 tauri-action 使用），并在日志里给 notice
+      # 没有 → 输出 enabled=false，走未签名构建，CI 不会因为缺密钥失败
+      - name: Prepare macOS signing env
+        id: signing
+        if: matrix.mac
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=macOS 未签名::未配置 APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD，macOS 产物为未签名版本（见 docs/MACOS-SIGNING.md）"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+          # 只写入非空变量，避免出现空的 APPLE_SIGNING_IDENTITY 让 codesign 报错
+          {
+            printf 'APPLE_CERTIFICATE<<__CERT_EOF__\n%s\n__CERT_EOF__\n' "${APPLE_CERTIFICATE}"
+            printf 'APPLE_CERTIFICATE_PASSWORD<<__CERT_PWD_EOF__\n%s\n__CERT_PWD_EOF__\n' "${APPLE_CERTIFICATE_PASSWORD}"
+            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              value="${!name:-}"
+              if [ -n "${value}" ]; then
+                printf '%s<<__%s_EOF__\n%s\n__%s_EOF__\n' "$name" "$name" "$value" "$name"
+              fi
+            done
+          } >> "$GITHUB_ENV"
+
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            echo "::notice title=macOS 签名::已检测到证书与公证账号，将签名并公证"
+          else
+            echo "::notice title=macOS 签名::已检测到证书，但未配置 APPLE_ID / APPLE_TEAM_ID，只签名、不公证"
+          fi
+
+      - name: Build app (macOS 签名 + 公证)
+        if: matrix.mac && steps.signing.outputs.enabled == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 未配置签名证书时跳过 macOS 签名
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.args }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Build app (未签名：Windows / Linux / 未配置证书的 macOS)
+        if: ${{ !(matrix.mac && steps.signing.outputs.enabled == 'true') }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Verify macOS signature (签字校验)
+        if: matrix.mac && steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          APP=$(find src-tauri/target -type d -name "TomatoSQL.app" | head -n 1)
+          echo "app=$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime"
+          spctl --assess --type execute --verbose=4 "$APP" || echo "spctl 警告：公证/捆包检查未通过时请查看上面的输出"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
