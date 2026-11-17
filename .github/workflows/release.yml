@@ -260,15 +260,30 @@ jobs:
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-22.04
     permissions:
+      # contents: write → 往 Release 上传 Assets
       contents: write
+      # actions: read → 下载其它 job 里上传的 artefacts（缺这一项会 403，
+      # 报 "Artifact download failed after 5 retries"）
+      actions: read
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download installers
+        uses: actions/download-artifact@v4
         with:
+          # 只取安装包产物，跳过 docker buildx 自动生成的状态产物
+          pattern: tomato-sql-*
           path: assets
           merge-multiple: true
 
       - name: List assets
         run: ls -lh assets
+
+      - name: Fail fast if no installers
+        run: |
+          set -euo pipefail
+          COUNT=$(find assets -type f | wc -l)
+          echo "共 $COUNT 个安装包"
+          find assets -type f -printf '%f\n' | sort
+          test "$COUNT" -ge 3
 
       - name: Attach to release
         uses: softprops/action-gh-release@v2
@@ -278,6 +293,17 @@ jobs:
           fail_on_unmatched_files: true
           draft: false
           prerelease: ${{ github.event.release.prerelease || false }}
+
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets[] | "\(.name)\t\(.size) bytes"'
+          TOTAL=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets | length')
+          echo "Release $TAG 现有 $TOTAL 个附件"
+          test "$TOTAL" -ge 3
 
   docker:
     name: Build & push sync server image

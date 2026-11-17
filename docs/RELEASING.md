@@ -78,7 +78,23 @@ docker    构建并推送同步服务端镜像到 ghcr.io/<owner>/<repo>/sync:<�
 | --- | --- |
 | 发布 Release 后没有触发构建 | 确认是 **published** 而不是 draft；确认工作流文件在默认分支上（`release` 事件只从默认分支读取工作流） |
 | 某个平台失败，其它成功 | 修好后 `Actions → Release → Run workflow`，填同一个 tag 重跑；已成功的平台会重新上传并覆盖同名文件 |
+| `Attach assets to release` 失败，日志是 `Unable to download artifact(s): ... failed after 5 retries` | job 级 `permissions` 里漏了 **`actions: read`**：写 `permissions:` 后未列出的权限会变成 `none`，下载产物被 403 拒绝并重试 5 次。本仓库已修复（`contents: write` + `actions: read`），自己改权限时务必保留这两项 |
+| 上传到 Release 时 `fail_on_unmatched_files` 报错 | 说明 `assets/` 里没有安装包：先看对应平台的 `Upload installers` 步骤是否真的产出文件（打包路径或 `--bundles` 参数写错会匹配不到） |
 | 想重新发某个版本 | `gh release delete v1.2.0 --yes` 后重新 `gh release create`，或直接重跑 workflow 并指定该 tag |
 | 不想让 CI 每次都跑 | 现在就是：只有 Release 才构建。如果还想要 PR 上的轻量检查，可以另建一个只跑 `test` 的 `ci.yml`（`on: pull_request`），默认没有启用 |
 | 需要更新 `latest` 的 Docker 镜像但不想发版 | 手动触发 `workflow_dispatch` 并填 tag 即可（`publish != false` 时 docker job 才会跑），或临时给 `docker` job 加 `type=raw,value=latest` 的 tag 触发 |
 | macOS 产物"未签名" | 仓库没配 `APPLE_CERTIFICATE` 等 Secrets，见 `docs/MACOS-SIGNING.md` |
+
+## 7. 只补发某一个已存在的版本（不重新发 Release）
+
+`workflow_dispatch` 会读取**默认分支**上的工作流文件，所以修改 CI 后要先合到默认分支：
+
+```bash
+git push origin main                     # 或 master
+
+# 重新构建并把产物附加到已有 tag 的 Release（会覆盖同名 Asset）
+gh workflow run release.yml -f tag=v1.0.1
+gh run watch                             # 观察进度
+```
+
+> 注意：`gh run rerun <id> --failed` 用的是**那次运行提交里的**工作流文件，修好 CI 后再重跑旧 run 仍然是旧逻辑，所以要么重新 dispatch 一次，要么重新发布一次 Release。
