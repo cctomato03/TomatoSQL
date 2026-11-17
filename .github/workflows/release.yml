@@ -12,6 +12,10 @@ on:
         description: "要附加产物的 Release tag（如 v1.0.0）；留空则只构建不发布"
         required: false
         default: ""
+      run_id:
+        description: "可选：复用某次运行的构建产物（填 run id 时跳过构建，只重新附加到 Release）"
+        required: false
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,6 +34,8 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
       publish: ${{ steps.meta.outputs.publish }}
+      run_id: ${{ steps.meta.outputs.run_id }}
+      skip_build: ${{ steps.meta.outputs.skip_build }}
     steps:
       - name: Resolve tag & version
         id: meta
@@ -58,9 +64,19 @@ jobs:
             echo "::notice title=仅构建::未提供 tag，产物只作为 workflow artifact 保留"
           fi
 
+          REUSE_RUN="${{ github.event.inputs.run_id }}"
+          echo "run_id=$REUSE_RUN" >> "$GITHUB_OUTPUT"
+          if [ -n "$REUSE_RUN" ]; then
+            echo "skip_build=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=复用产物::跳过构建，直接复用 run $REUSE_RUN 的产物"
+          else
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     name: Test
     needs: prepare
+    if: needs.prepare.outputs.skip_build != 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +112,7 @@ jobs:
   build:
     name: Build (${{ matrix.label }})
     needs: [prepare, test]
+    if: needs.prepare.outputs.skip_build != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -257,7 +274,11 @@ jobs:
   publish:
     name: Attach assets to release
     needs: [prepare, build]
-    if: needs.prepare.outputs.publish == 'true'
+    # 复用已有产物（skip_build）时 build 会被跳过，因此不能用默认的 success() 判断
+    if: |
+      always() && needs.prepare.result == 'success'
+      && needs.prepare.outputs.publish == 'true'
+      && (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-22.04
     permissions:
       # contents: write → 往 Release 上传 Assets
@@ -266,7 +287,8 @@ jobs:
       # 报 "Artifact download failed after 5 retries"）
       actions: read
     steps:
-      - name: Download installers
+      - name: Download installers (this run)
+        if: needs.prepare.outputs.run_id == ''
         uses: actions/download-artifact@v4
         with:
           # 只取安装包产物，跳过 docker buildx 自动生成的状态产物
@@ -274,22 +296,42 @@ jobs:
           path: assets
           merge-multiple: true
 
-      - name: List assets
-        run: ls -lh assets
+      - name: Download installers (from run ${{ needs.prepare.outputs.run_id }})
+        if: needs.prepare.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tomato-sql-*
+          path: assets
+          merge-multiple: true
+          run-id: ${{ needs.prepare.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show downloaded tree
+        run: find assets -type f -printf '%s\t%p\n' | sort -k2
+
+      # upload-artifact 会保留相对路径（如 assets/release/bundle/dmg/x.dmg），
+      # 这里按扩展名把安装包汇总到一层，便于后面用 release-assets/* 匹配
+      - name: Flatten installers
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find assets -type f \
+            \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
+            -exec cp -v {} release-assets/ \;
+          ls -lh release-assets
 
       - name: Fail fast if no installers
         run: |
           set -euo pipefail
-          COUNT=$(find assets -type f | wc -l)
+          COUNT=$(find release-assets -type f | wc -l)
           echo "共 $COUNT 个安装包"
-          find assets -type f -printf '%f\n' | sort
           test "$COUNT" -ge 3
 
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
-          files: assets/*
+          files: release-assets/*
           fail_on_unmatched_files: true
           draft: false
           prerelease: ${{ github.event.release.prerelease || false }}
