@@ -1085,15 +1085,14 @@ textarea {
 }
 
 /* 侧边栏内的库/表树（Navicat 风格，挂在连接节点下面）
-   注意：这里不做水平位移（用背景虚线表达层级），
-   这样"表名"与"数据库名"的左边界能严格对齐 */
+   每一级都比上一级缩进，形成清晰的层级感；虚线用背景渐变画在缩进处 */
 .sb-children {
+  margin-left: 0;
+  padding-left: 0.8rem;
   background-image: linear-gradient(to bottom, var(--border), var(--border));
   background-size: 1px 100%;
-  background-position: 0.14rem 0;
+  background-position: 0.12rem 0;
   background-repeat: no-repeat;
-  padding-left: 0;
-  margin-left: 0;
 }
 
 .sb-db,

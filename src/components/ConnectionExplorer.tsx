@@ -14,18 +14,24 @@ import {
   Table2,
   TerminalSquare,
   Trash2,
-  Upload,
   Download,
+  Power,
 } from "lucide-react";
 import { open as openFile, save as saveFile } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { cacheKey, dbCache, invalidateConnCache, tableCache } from "../explorerCache";
 import { useStore } from "../store";
-import type { Connection, RoutineInfo, TableInfo, BackupFile } from "../types";
+import type { BackupFile, Connection, RoutineInfo, TableInfo } from "../types";
 import { ContextMenu, type MenuItemSpec } from "./ui";
 import { confirmDialog } from "./confirm";
-import { connectTo } from "../actions";
+import { connectTo, disconnectFrom } from "../actions";
+import {
+  SqlScriptDialog,
+  functionTemplate,
+  tableTemplate,
+  viewTemplate,
+} from "./SqlScriptDialog";
 
 export { invalidateConnCache };
 
@@ -33,28 +39,26 @@ interface Props {
   conn: Connection;
   onOpenTable: (database: string, table: string) => void;
   onOpenQuery: (database: string, sql?: string) => void;
-  onImport: (database: string, table?: string) => void;
 }
 
-type Selection =
-  | { kind: "db"; db: string }
-  | { kind: "table"; db: string; table: string }
-  | { kind: "query"; db: string; id: string }
-  | { kind: "backup"; db: string; path: string }
-  | null;
+type Sections = "tables" | "views" | "routines" | "queries" | "backups";
 
-type SectionKey = "tables" | "views" | "routines" | "queries" | "backups";
+type ScriptDialog = {
+  database: string;
+  title: string;
+  hint?: string;
+  sql: string;
+} | null;
 
 /** 左侧栏里连接节点下的对象树：数据库 → 表 / 视图 / 函数 / 查询 / 备份 */
-export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }: Props) {
+export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
   const notify = useStore((s) => s.notify);
   const savedQueries = useStore((s) => s.ws.savedQueries ?? []);
-  const addSavedQuery = useStore((s) => s.addSavedQuery);
   const removeSavedQuery = useStore((s) => s.removeSavedQuery);
   const isConnected = Boolean(useStore((s) => s.connected[conn.id]));
 
   const [dbs, setDbs] = useState<string[]>(() => dbCache.get(conn.id) ?? []);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
   const [sections, setSections] = useState<Record<string, boolean>>({});
   const [tables, setTables] = useState<Record<string, TableInfo[]>>({});
   const [routines, setRoutines] = useState<Record<string, RoutineInfo[]>>({});
@@ -62,9 +66,8 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
   const [loadingDb, setLoadingDb] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sel, setSel] = useState<Selection>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItemSpec[] } | null>(null);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [scriptDialog, setScriptDialog] = useState<ScriptDialog>(null);
 
   const loadDatabases = useCallback(
     async (force = false) => {
@@ -115,9 +118,9 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
   );
 
   const loadRoutines = useCallback(
-    async (database: string, force = false) => {
-      if (!force && routines[database]) return;
+    async (database: string) => {
       try {
+        setRoutines((s) => ({ ...s, [database]: s[database] ?? [] }));
         const list = await api.routines(conn.id, database);
         setRoutines((s) => ({ ...s, [database]: list }));
       } catch (e) {
@@ -125,7 +128,7 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
         setRoutines((s) => ({ ...s, [database]: [] }));
       }
     },
-    [conn.id, routines, notify],
+    [conn.id, notify],
   );
 
   const loadBackups = useCallback(
@@ -141,49 +144,94 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
     [conn.id, notify],
   );
 
-  const toggleSection = async (database: string, key: SectionKey) => {
+  /** 打开数据库：加载它的元数据（双击或右键「打开」） */
+  const openDatabase = useCallback(
+    async (database: string) => {
+      if (!isConnected) {
+        const ok = await connectTo(conn);
+        if (!ok) return;
+      }
+      setOpened((s) => ({ ...s, [database]: true }));
+      void loadTables(database);
+    },
+    [isConnected, conn, loadTables],
+  );
+
+  /** 关闭数据库：收起、释放元数据；若该连接已没有打开的库，则顺带断开连接 */
+  const closeDatabase = useCallback(
+    async (database: string) => {
+      setOpened((s) => {
+        const next = { ...s, [database]: false };
+        const anyOpen = Object.entries(next).some(([k, v]) => v && k !== database);
+        if (!anyOpen) {
+          void disconnectFrom(conn.id).then(() =>
+            notify(`已关闭数据库 ${database} 并断开连接`, "ok"),
+          );
+        } else {
+          notify(`已关闭数据库 ${database}`, "ok");
+        }
+        return next;
+      });
+      // 清掉该库的元数据缓存，下次打开重新读取
+      tableCache.delete(cacheKey(conn.id, database));
+      setTables((s) => {
+        const next = { ...s };
+        delete next[database];
+        return next;
+      });
+      setRoutines((s) => {
+        const next = { ...s };
+        delete next[database];
+        return next;
+      });
+      setBackups((s) => {
+        const next = { ...s };
+        delete next[database];
+        return next;
+      });
+      setSections((s) => {
+        const next = { ...s };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${database}:`)) delete next[key];
+        }
+        return next;
+      });
+    },
+    [conn.id, notify],
+  );
+
+  const refreshDatabase = async (database: string) => {
+    tableCache.delete(cacheKey(conn.id, database));
+    await Promise.all([loadTables(database, true), loadRoutines(database), loadBackups(database)]);
+  };
+
+  const refresh = () => {
+    invalidateConnCache(conn.id);
+    setTables({});
+    setRoutines({});
+    setBackups({});
+    void loadDatabases(true);
+  };
+
+  const toggleSection = async (database: string, key: Sections) => {
     const k = `${database}:${key}`;
     const next = !sections[k];
     setSections((s) => ({ ...s, [k]: next }));
     if (!next) return;
     if (key === "routines") await loadRoutines(database);
     if (key === "backups") await loadBackups(database);
-  };
-
-  const toggleDb = useCallback(
-    async (database: string) => {
-      setSel({ kind: "db", db: database });
-      const next = !expanded[database];
-      setExpanded((s) => ({ ...s, [database]: next }));
-      if (!next) return;
-      if (!isConnected) {
-        const ok = await connectTo(conn);
-        if (!ok) return;
-      }
-      void loadTables(database);
-    },
-    [expanded, isConnected, conn, loadTables],
-  );
-
-  const refresh = () => {
-    invalidateConnCache(conn.id);
-    setTables({});
-    setRoutines({});
-    void loadDatabases(true);
+    if (key === "tables" || key === "views") await loadTables(database);
   };
 
   // ---------- 数据库级操作 ----------
 
   const exportDatabase = async (database: string, mode: "structure" | "data") => {
-    const key = `${database}:${mode}`;
-    setBusyKey(key);
     try {
       const list = await api.tables(conn.id, database);
       const names = list.filter((t) => t.kind === "table").map((t) => t.name);
       if (!names.length) throw new Error("该数据库没有表可导出");
-      const suggested = `${database || "database"}-${mode === "structure" ? "schema" : "full"}.sql`;
       const target = await saveFile({
-        defaultPath: suggested,
+        defaultPath: `${database || "database"}-${mode === "structure" ? "schema" : "full"}.sql`,
         filters: [{ name: "SQL", extensions: ["sql"] }],
       });
       if (typeof target !== "string") return;
@@ -209,8 +257,6 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
       );
     } catch (e) {
       notify(`导出失败：${e}`, "err");
-    } finally {
-      setBusyKey(null);
     }
   };
 
@@ -220,7 +266,6 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
       filters: [{ name: "SQL 脚本", extensions: ["sql"] }],
     });
     if (typeof picked !== "string") return;
-    setBusyKey(`${database}:runsqlfile`);
     try {
       const res = await api.importData({
         connId: conn.id,
@@ -240,16 +285,31 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
         `SQL 文件执行完成：成功 ${res.inserted} 条${res.failed ? `，失败 ${res.failed} 条` : ""}`,
         res.failed ? "err" : "ok",
       );
-      refresh();
+      void refreshDatabase(database);
     } catch (e) {
       notify(`执行失败：${e}`, "err");
-    } finally {
-      setBusyKey(null);
+    }
+  };
+
+  const dropDatabase = async (database: string) => {
+    if (
+      !(await confirmDialog({
+        title: "删除数据库",
+        message: `确定删除数据库「${database}」？\n该操作会删除库中所有表与数据，不可撤销。`,
+      }))
+    ) {
+      return;
+    }
+    try {
+      await api.dropDatabase(conn.id, database);
+      notify(`已删除数据库 ${database}`, "ok");
+      refresh();
+    } catch (e) {
+      notify(`删除失败：${e}`, "err");
     }
   };
 
   const createBackup = async (database: string) => {
-    setBusyKey(`${database}:backup`);
     try {
       const file = await api.backupCreate(conn.id, database);
       notify(`备份完成：${file.name}（${(file.size / 1024).toFixed(1)} KB）`, "ok");
@@ -257,14 +317,11 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
       await loadBackups(database);
     } catch (e) {
       notify(`备份失败：${e}`, "err");
-    } finally {
-      setBusyKey(null);
     }
   };
 
   const restoreBackup = async (database: string, file: BackupFile) => {
     if (
-      useStore.getState().ws.settings.confirmDestructive &&
       !(await confirmDialog({
         title: "恢复备份",
         message: `将执行备份文件覆盖同名表结构与数据：\n${file.name}\n\n确定继续？`,
@@ -278,9 +335,7 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
         `恢复完成：执行 ${res.inserted} 条语句${res.failed ? `，失败 ${res.failed}` : ""}`,
         res.failed ? "err" : "ok",
       );
-      invalidateConnCache(conn.id);
-      setTables({});
-      await loadTables(database, true);
+      await refreshDatabase(database);
     } catch (e) {
       notify(`恢复失败：${e}`, "err");
     }
@@ -288,7 +343,6 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
 
   const deleteBackup = async (database: string, file: BackupFile) => {
     if (
-      useStore.getState().ws.settings.confirmDestructive &&
       !(await confirmDialog({ title: "删除备份", message: `确定删除备份文件 ${file.name}？` }))
     ) {
       return;
@@ -311,93 +365,54 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
     }
   };
 
-  // ---------- 右键菜单 ----------
+  // ---------- 右键菜单（按你的要求精简） ----------
 
-  const dbMenu = (database: string): MenuItemSpec[] => [
-    {
-      label: expanded[database] ? "收起" : "展开",
-      icon: <ChevronRight size={13} />,
-      onClick: () => void toggleDb(database),
-    },
-    {
-      label: "刷新",
-      icon: <RefreshCw size={13} />,
-      onClick: () => {
-        void loadTables(database, true);
-        void loadRoutines(database, true);
-        void loadBackups(database);
+  /** 数据库：打开/关闭、刷新、新建查询、运行 SQL 文件、导出（结构 / 结构+数据）、删除 */
+  const dbMenu = (database: string): MenuItemSpec[] => {
+    const isOpen = Boolean(opened[database]);
+    return [
+      isOpen
+        ? { label: "关闭数据库", icon: <Power size={13} />, onClick: () => void closeDatabase(database) }
+        : { label: "打开数据库", icon: <Power size={13} />, onClick: () => void openDatabase(database) },
+      {
+        label: "刷新",
+        icon: <RefreshCw size={13} />,
+        onClick: () => void refreshDatabase(database),
       },
-    },
-    { separator: true, label: "s1" },
-    { label: "新建查询", icon: <TerminalSquare size={13} />, onClick: () => onOpenQuery(database, "") },
-    {
-      label: "运行 SQL 语句…",
-      icon: <Play size={13} />,
-      onClick: () => onOpenQuery(database, ""),
-    },
-    { label: "运行 SQL 文件…", icon: <FileCode2 size={13} />, onClick: () => void runSqlFile(database) },
-    { separator: true, label: "s2" },
-    {
-      label: "导入 SQL 脚本…",
-      icon: <Upload size={13} />,
-      onClick: () => onImport(database),
-    },
-    {
-      label: "导出数据库（仅结构）",
-      icon: <Download size={13} />,
-      onClick: () => void exportDatabase(database, "structure"),
-    },
-    {
-      label: "导出数据库（结构 + 数据）",
-      icon: <Download size={13} />,
-      onClick: () => void exportDatabase(database, "data"),
-    },
-    { separator: true, label: "s3" },
-    { label: "新建备份", icon: <Archive size={13} />, onClick: () => void createBackup(database) },
-    { label: "打开备份目录", icon: <FolderOpen size={13} />, onClick: () => void openBackupDir() },
-  ];
-
-  const tableMenu = (database: string, t: TableInfo): MenuItemSpec[] => [
-    { label: "打开数据（新标签页）", icon: <Table2 size={13} />, onClick: () => onOpenTable(database, t.name) },
-    {
-      label: "生成 SELECT 语句",
-      icon: <TerminalSquare size={13} />,
-      onClick: () => onOpenQuery(database, `SELECT * FROM \`${t.name}\` LIMIT 100;`),
-    },
-    { separator: true, label: "s1" },
-    { label: "导入数据到该表", icon: <Upload size={13} />, onClick: () => onImport(database, t.name) },
-  ];
-
-  const queryMenu = (database: string, q: { id: string; name: string; sql: string }): MenuItemSpec[] => [
-    { label: "打开查询", icon: <TerminalSquare size={13} />, onClick: () => onOpenQuery(database, q.sql) },
-    {
-      label: "删除查询",
-      icon: <Trash2 size={13} />,
-      danger: true,
-      onClick: () => {
-        void (async () => {
-          if (
-            useStore.getState().ws.settings.confirmDestructive &&
-            !(await confirmDialog({ title: "删除查询", message: `确定删除保存的查询「${q.name}」？` }))
-          ) {
-            return;
-          }
-          removeSavedQuery(q.id);
-          notify("已删除查询", "ok");
-        })();
+      { separator: true, label: "s1" },
+      {
+        label: "新建查询",
+        icon: <TerminalSquare size={13} />,
+        onClick: () => onOpenQuery(database, ""),
       },
-    },
-  ];
+      {
+        label: "运行 SQL 文件…",
+        icon: <FileCode2 size={13} />,
+        onClick: () => void runSqlFile(database),
+      },
+      {
+        label: "导出数据库（仅结构）",
+        icon: <Download size={13} />,
+        onClick: () => void exportDatabase(database, "structure"),
+      },
+      {
+        label: "导出数据库（结构 + 数据）",
+        icon: <Download size={13} />,
+        onClick: () => void exportDatabase(database, "data"),
+      },
+      { separator: true, label: "s2" },
+      {
+        label: "删除数据库",
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onClick: () => void dropDatabase(database),
+      },
+    ];
+  };
 
-  const backupMenu = (database: string, file: BackupFile): MenuItemSpec[] => [
-    { label: "恢复此备份", icon: <RefreshCw size={13} />, onClick: () => void restoreBackup(database, file) },
-    { label: "删除备份", icon: <Trash2 size={13} />, danger: true, onClick: () => void deleteBackup(database, file) },
-    { separator: true, label: "s1" },
-    {
-      label: "打开所在目录",
-      icon: <FolderOpen size={13} />,
-      onClick: () => void revealItemInDir(file.path).catch(() => void 0),
-    },
+  /** 表 / 视图 / 函数 / 查询 / 备份：只保留对应的「新建」 */
+  const newOnlyMenu = (database: string, label: string, action: () => void): MenuItemSpec[] => [
+    { label, icon: <Plus size={13} />, onClick: action },
   ];
 
   const openMenuAt = (e: React.MouseEvent, items: MenuItemSpec[]) => {
@@ -414,11 +429,24 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
     );
   }
 
-  const sectionHead = (database: string, key: SectionKey, label: string, icon: React.ReactNode, count: number) => {
+  const sectionHead = (
+    database: string,
+    key: Sections,
+    label: string,
+    icon: React.ReactNode,
+    count: number,
+    onNew: () => void,
+    newLabel: string,
+  ) => {
     const k = `${database}:${key}`;
     const open = Boolean(sections[k]);
     return (
-      <div className="sb-section" onClick={() => void toggleSection(database, key)} title={`${label}（${count}）`}>
+      <div
+        className="sb-section"
+        onClick={() => void toggleSection(database, key)}
+        onContextMenu={(e) => openMenuAt(e, newOnlyMenu(database, newLabel, onNew))}
+        title={`${label}（${count}）`}
+      >
         <span className={`obj-chev ${open ? "open" : ""}`} style={{ width: "0.8rem" }}>
           <ChevronRight size={11} />
         </span>
@@ -435,7 +463,7 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
       {error && <div className="obj-empty" style={{ color: "var(--danger)" }}>{error}</div>}
 
       {dbs.map((db) => {
-        const isOpen = Boolean(expanded[db]);
+        const isOpen = Boolean(opened[db]);
         const all = tables[db] ?? [];
         const tableList = all.filter((t) => t.kind === "table");
         const viewList = all.filter((t) => t.kind === "view");
@@ -445,24 +473,17 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
         return (
           <div key={db}>
             <div
-              className={`sb-db ${sel?.kind === "db" && sel.db === db ? "active" : ""}`}
-              onClick={() => setSel({ kind: "db", db })}
-              onDoubleClick={() => void toggleDb(db)}
+              className={`sb-db ${isOpen ? "opened" : ""}`}
+              onClick={() => void (isOpen ? closeDatabase(db) : openDatabase(db))}
+              onDoubleClick={() => void openDatabase(db)}
               onContextMenu={(e) => openMenuAt(e, dbMenu(db))}
-              title={`${db}（双击展开/收起，右键更多操作）`}
+              title={`${db}（单击打开/关闭，右键更多操作）`}
             >
-              <button
-                className={`obj-chev ${isOpen ? "open" : ""}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void toggleDb(db);
-                }}
-                title={isOpen ? "收起" : "展开"}
-              >
+              <span className={`obj-chev ${isOpen ? "open" : ""}`} style={{ width: "0.8rem" }}>
                 <ChevronRight size={12} />
-              </button>
+              </span>
               <span className="obj-ico">
-                <Database size={12} color="var(--accent)" />
+                <Database size={12} color={isOpen ? "var(--accent)" : "var(--text-3)"} />
               </span>
               <span className="tree-label">{db}</span>
               <span className="obj-count">
@@ -472,55 +493,50 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
 
             {isOpen && (
               <div className="sb-children">
-                {/* 表 */}
-                {sectionHead(db, "tables", "表", <Table2 size={11} color="var(--text-3)" />, tableList.length)}
+                {sectionHead(db, "tables", "表", <Table2 size={11} color="var(--text-3)" />, tableList.length,
+                  () => setScriptDialog({ database: db, title: "新建表", hint: "按需修改建表语句后执行", sql: tableTemplate("new_table") }),
+                  "新建表")}
                 {sections[`${db}:tables`] && (
                   <div className="sb-children">
-                    {tableList.map((t) => {
-                      const active = sel?.kind === "table" && sel.db === db && sel.table === t.name;
-                      return (
-                        <div
-                          key={t.name}
-                          className={`sb-table ${active ? "active" : ""}`}
-                          onClick={() => setSel({ kind: "table", db, table: t.name })}
-                          onDoubleClick={() => onOpenTable(db, t.name)}
-                          onContextMenu={(e) => {
-                            setSel({ kind: "table", db, table: t.name });
-                            openMenuAt(e, tableMenu(db, t));
-                          }}
-                          title={`${t.name}（双击打开数据）`}
-                        >
-                          <span className="obj-spacer" />
-                          <span className="obj-ico">
-                            <Table2 size={11} color="var(--text-3)" />
-                          </span>
-                          <span className="tree-label">{t.name}</span>
-                        </div>
-                      );
-                    })}
+                    {tableList.map((t) => (
+                      <div
+                        key={t.name}
+                        className="sb-table"
+                        onDoubleClick={() => onOpenTable(db, t.name)}
+                        onContextMenu={(e) =>
+                          openMenuAt(e, newOnlyMenu(db, "新建表", () =>
+                            setScriptDialog({ database: db, title: "新建表", sql: tableTemplate("new_table") }),
+                          ))
+                        }
+                        title={`${t.name}（双击打开数据）`}
+                      >
+                        <span className="obj-ico">
+                          <Table2 size={11} color="var(--text-3)" />
+                        </span>
+                        <span className="tree-label">{t.name}</span>
+                      </div>
+                    ))}
                     {!tableList.length && !loadingDb[db] && <div className="obj-empty">无表</div>}
                   </div>
                 )}
 
-                {/* 视图 */}
-                {sectionHead(db, "views", "视图", <Eye size={11} color="var(--info)" />, viewList.length)}
+                {sectionHead(db, "views", "视图", <Eye size={11} color="var(--info)" />, viewList.length,
+                  () => setScriptDialog({ database: db, title: "新建视图", hint: "把 FROM 后面的表名改成你的表", sql: viewTemplate("new_view", db) }),
+                  "新建视图")}
                 {sections[`${db}:views`] && (
                   <div className="sb-children">
                     {viewList.map((t) => (
                       <div
                         key={t.name}
-                        className={`sb-table ${
-                          sel?.kind === "table" && sel.db === db && sel.table === t.name ? "active" : ""
-                        }`}
-                        onClick={() => setSel({ kind: "table", db, table: t.name })}
+                        className="sb-table"
                         onDoubleClick={() => onOpenTable(db, t.name)}
-                        onContextMenu={(e) => {
-                          setSel({ kind: "table", db, table: t.name });
-                          openMenuAt(e, tableMenu(db, t));
-                        }}
+                        onContextMenu={(e) =>
+                          openMenuAt(e, newOnlyMenu(db, "新建视图", () =>
+                            setScriptDialog({ database: db, title: "新建视图", sql: viewTemplate("new_view", db) }),
+                          ))
+                        }
                         title={`${t.name}（视图，双击查看数据）`}
                       >
-                        <span className="obj-spacer" />
                         <span className="obj-ico">
                           <Eye size={11} color="var(--info)" />
                         </span>
@@ -531,8 +547,9 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
                   </div>
                 )}
 
-                {/* 函数 */}
-                {sectionHead(db, "routines", "函数", <FunctionSquare size={11} color="var(--warn)" />, routineList.length)}
+                {sectionHead(db, "routines", "函数", <FunctionSquare size={11} color="var(--warn)" />, routineList.length,
+                  () => setScriptDialog({ database: db, title: "新建函数", hint: conn.kind === "sqlite" ? "SQLite 不支持存储函数，仅示例模板" : "MySQL 存储函数模板", sql: functionTemplate("new_fn") }),
+                  "新建函数")}
                 {sections[`${db}:routines`] && (
                   <div className="sb-children">
                     {routineList.map((r) => (
@@ -545,9 +562,13 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
                             `SHOW CREATE ${r.kind === "PROCEDURE" ? "PROCEDURE" : "FUNCTION"} \`${r.name}\`;`,
                           )
                         }
-                        title={`${r.name}（${r.kind}${r.returns ? ` → ${r.returns}` : ""}，双击查看定义）`}
+                        onContextMenu={(e) =>
+                          openMenuAt(e, newOnlyMenu(db, "新建函数", () =>
+                            setScriptDialog({ database: db, title: "新建函数", sql: functionTemplate("new_fn") }),
+                          ))
+                        }
+                        title={`${r.name}（${r.kind}，双击查看定义）`}
                       >
-                        <span className="obj-spacer" />
                         <span className="obj-ico">
                           <FunctionSquare size={11} color="var(--warn)" />
                         </span>
@@ -562,84 +583,94 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
                   </div>
                 )}
 
-                {/* 查询（保存的 SQL） */}
-                {sectionHead(db, "queries", "查询", <TerminalSquare size={11} color="var(--success)" />, myQueries.length)}
+                {sectionHead(db, "queries", "查询", <TerminalSquare size={11} color="var(--success)" />, myQueries.length,
+                  () => onOpenQuery(db, ""),
+                  "新建查询")}
                 {sections[`${db}:queries`] && (
                   <div className="sb-children">
                     {myQueries.map((q) => (
                       <div
                         key={q.id}
-                        className={`sb-table ${sel?.kind === "query" && sel.id === q.id ? "active" : ""}`}
-                        onClick={() => setSel({ kind: "query", db, id: q.id })}
+                        className="sb-table"
                         onDoubleClick={() => onOpenQuery(db, q.sql)}
-                        onContextMenu={(e) => {
-                          setSel({ kind: "query", db, id: q.id });
-                          openMenuAt(e, queryMenu(db, q));
-                        }}
+                        onContextMenu={(e) =>
+                          openMenuAt(e, [
+                            ...newOnlyMenu(db, "新建查询", () => onOpenQuery(db, "")),
+                            { separator: true, label: "s1" },
+                            {
+                              label: "删除查询",
+                              icon: <Trash2 size={13} />,
+                              danger: true,
+                              onClick: () => {
+                                void (async () => {
+                                  if (
+                                    !(await confirmDialog({
+                                      title: "删除查询",
+                                      message: `确定删除保存的查询「${q.name}」？`,
+                                    }))
+                                  ) {
+                                    return;
+                                  }
+                                  removeSavedQuery(q.id);
+                                  notify("已删除查询", "ok");
+                                })();
+                              },
+                            },
+                          ])
+                        }
                         title={`${q.name}（双击打开）`}
                       >
-                        <span className="obj-spacer" />
                         <span className="obj-ico">
                           <TerminalSquare size={11} color="var(--success)" />
                         </span>
                         <span className="tree-label">{q.name}</span>
                       </div>
                     ))}
-                    <div
-                      className="sb-table sb-action"
-                      onClick={() => {
-                        onOpenQuery(db, "");
-                        notify("在查询窗口点『保存查询』即可收藏到这里", "info");
-                      }}
-                      title="新建查询"
-                    >
-                      <span className="obj-spacer" />
-                      <span className="obj-ico">
-                        <Plus size={11} color="var(--text-3)" />
-                      </span>
-                      <span className="tree-label">新建查询…</span>
-                    </div>
+                    {!myQueries.length && <div className="obj-empty">暂无保存的查询</div>}
                   </div>
                 )}
 
-                {/* 备份 */}
-                {sectionHead(db, "backups", "备份", <Archive size={11} color="var(--text-3)" />, backupList.length)}
+                {sectionHead(db, "backups", "备份", <Archive size={11} color="var(--text-3)" />, backupList.length,
+                  () => void createBackup(db),
+                  "新建备份")}
                 {sections[`${db}:backups`] && (
                   <div className="sb-children">
                     {backupList.map((f) => (
                       <div
                         key={f.path}
-                        className={`sb-table ${sel?.kind === "backup" && sel.path === f.path ? "active" : ""}`}
-                        onClick={() => setSel({ kind: "backup", db, path: f.path })}
+                        className="sb-table"
                         onDoubleClick={() => void restoreBackup(db, f)}
-                        onContextMenu={(e) => {
-                          setSel({ kind: "backup", db, path: f.path });
-                          openMenuAt(e, backupMenu(db, f));
-                        }}
+                        onContextMenu={(e) =>
+                          openMenuAt(e, [
+                            ...newOnlyMenu(db, "新建备份", () => void createBackup(db)),
+                            { separator: true, label: "s1" },
+                            {
+                              label: "恢复此备份",
+                              icon: <RefreshCw size={13} />,
+                              onClick: () => void restoreBackup(db, f),
+                            },
+                            {
+                              label: "删除备份",
+                              icon: <Trash2 size={13} />,
+                              danger: true,
+                              onClick: () => void deleteBackup(db, f),
+                            },
+                            {
+                              label: "打开所在目录",
+                              icon: <FolderOpen size={13} />,
+                              onClick: () => void revealItemInDir(f.path).catch(() => void 0),
+                            },
+                          ])
+                        }
                         title={`${f.name} · ${(f.size / 1024).toFixed(1)} KB（双击恢复）`}
                       >
-                        <span className="obj-spacer" />
                         <span className="obj-ico">
                           <Save size={11} color="var(--text-3)" />
                         </span>
                         <span className="tree-label">{f.name}</span>
                       </div>
                     ))}
-                    <div
-                      className="sb-table sb-action"
-                      onClick={() => void createBackup(db)}
-                      title="立即备份整个数据库"
-                    >
-                      <span className="obj-spacer" />
-                      <span className="obj-ico">
-                        {busyKey === `${db}:backup` ? (
-                          <div className="spinner" style={{ width: "0.7rem", height: "0.7rem" }} />
-                        ) : (
-                          <Plus size={11} color="var(--text-3)" />
-                        )}
-                      </span>
-                      <span className="tree-label">立即备份…</span>
-                    </div>
+                    {!backupList.length && <div className="obj-empty">暂无备份</div>}
                   </div>
                 )}
               </div>
@@ -658,6 +689,27 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery, onImport }:
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+
+
+      {scriptDialog && (
+        <SqlScriptDialog
+          conn={conn}
+          database={scriptDialog.database}
+          title={scriptDialog.title}
+          hint={scriptDialog.hint}
+          initialSql={scriptDialog.sql}
+          onClose={() => setScriptDialog(null)}
+          onDone={() => {
+            // 执行完脚本（新建表/视图/函数）后，必须重新读取该库的对象列表，
+            // 否则左栏会一直显示旧的表清单
+            const db = scriptDialog.database;
+            tableCache.delete(cacheKey(conn.id, db));
+            void loadTables(db, true);
+            void loadRoutines(db);
+            void loadBackups(db);
+          }}
+        />
+      )}
     </div>
   );
 }

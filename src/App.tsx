@@ -174,6 +174,7 @@ export default function App() {
           onOpenTable={(conn, database, table) => openTable(conn, database, table)}
           onOpenQuery={(conn, database, sql) => openQuery(conn, database, sql)}
           onImport={(conn, database, table) => setImportPreset({ connId: conn.id, database, table })}
+          onRunSqlFile={(conn) => setImportPreset({ connId: conn.id, database: "", table: "" })}
         />
 
         <main className="main">

@@ -57,6 +57,11 @@ export const api = {
     call<IndexInfo[]>("db_indexes", { connId, database, table }),
   routines: (connId: string, database: string) =>
     call<RoutineInfo[]>("db_routines", { connId, database }),
+  createDatabase: (connId: string, name: string, charset?: string) =>
+    call<void>("db_create_database", { connId, name, charset: charset ?? null }),
+  dropDatabase: (connId: string, name: string) =>
+    call<void>("db_drop_database", { connId, name }),
+  touchSqliteDb: (path: string) => call<void>("db_touch_sqlite_file", { path }),
   ddl: (connId: string, database: string, table: string) =>
     call<string>("db_ddl", { connId, database, table }),
   rowCount: (connId: string, database: string, table: string) =>

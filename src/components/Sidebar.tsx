@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronRight,
   Copy,
   Database,
   FolderPlus,
   Import,
+  FileCode2,
   Pencil,
   Plug,
   Plus,
@@ -20,6 +21,7 @@ import { useStore } from "../store";
 import type { Connection, Group } from "../types";
 import { connectTo, disconnectFrom, openConnectionView } from "../actions";
 import { ConnectionExplorer } from "./ConnectionExplorer";
+import { CreateDatabaseDialog } from "./CreateDatabaseDialog";
 import { confirmDialog } from "./confirm";
 import { ContextMenu, type MenuItemSpec } from "./ui";
 
@@ -33,6 +35,7 @@ interface Props {
   onOpenTable: (conn: Connection, database: string, table: string) => void;
   onOpenQuery: (conn: Connection, database: string, sql?: string) => void;
   onImport: (conn: Connection, database: string, table?: string) => void;
+  onRunSqlFile: (conn: Connection) => void;
 }
 
 export function Sidebar({
@@ -45,6 +48,7 @@ export function Sidebar({
   onOpenTable,
   onOpenQuery,
   onImport,
+  onRunSqlFile,
 }: Props) {
   const ws = useStore((s) => s.ws);
   const connected = useStore((s) => s.connected);
@@ -56,8 +60,25 @@ export function Sidebar({
   const removeConnection = useStore((s) => s.removeConnection);
   const notify = useStore((s) => s.notify);
 
+  // 连接被断开（不管是点插头、右键断开，还是关闭数据库导致的断开）时，
+  // 自动收起该节点，避免再次双击时被当成"收起"而不是重连
+  useEffect(() => {
+    setExpandedConns((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of Object.keys(next)) {
+        if (!connected[id]) {
+          next[id] = false;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [connected]);
+
   const [filter, setFilter] = useState("");
   const [expandedConns, setExpandedConns] = useState<Record<string, boolean>>({});
+  const [createDbConn, setCreateDbConn] = useState<Connection | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -87,22 +108,7 @@ export function Sidebar({
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  const connMenu = (conn: Connection): MenuItemSpec[] => [
-    {
-      label: connected[conn.id] ? (expandedConns[conn.id] ? "收起数据库列表" : "展开数据库列表") : "连接并展开",
-      icon: <Plug size={13} />,
-      onClick: () => void toggleConn(conn),
-    },
-    ...(connected[conn.id]
-      ? [
-          {
-            label: "断开连接",
-            icon: <Unplug size={13} />,
-            onClick: () => void disconnectFrom(conn.id),
-          },
-        ]
-      : []),
-    { separator: true, label: "sep1" },
+  const editCopyDelete = (conn: Connection): MenuItemSpec[] => [
     { label: "编辑连接", icon: <Pencil size={13} />, onClick: () => onEditConnection(conn) },
     {
       label: "复制连接",
@@ -118,31 +124,52 @@ export function Sidebar({
         useStore.getState().upsertConnection(copy);
       },
     },
-    { separator: true, label: "sep2" },
-    { label: "导入 / 导出", icon: <Import size={13} />, onClick: () => onOpenTransfer(conn) },
-    { label: "结构同步 / 迁移", icon: <RefreshCw size={13} />, onClick: () => onOpenSync(conn.id) },
-    { separator: true, label: "sep3" },
     {
       label: "删除连接",
       icon: <Trash2 size={13} />,
       danger: true,
       onClick: () => {
         void (async () => {
-          const needConfirm = useStore.getState().ws.settings.confirmDestructive;
-          const ok =
-            !needConfirm ||
-            (await confirmDialog({
+          if (
+            useStore.getState().ws.settings.confirmDestructive &&
+            !(await confirmDialog({
               title: "删除连接",
               message: `确定删除连接「${conn.name}」？该操作不可撤销。`,
-            }));
-          if (ok) {
-            removeConnection(conn.id);
-            notify(`已删除连接 ${conn.name}`, "ok");
+            }))
+          ) {
+            return;
           }
+          removeConnection(conn.id);
+          notify(`已删除连接 ${conn.name}`, "ok");
         })();
       },
     },
   ];
+
+  /** 连接右键菜单：打开时→新建数据库 / 运行 SQL 文件 / 断开 / 编辑复制删除；关闭时→仅编辑、复制、删除 */
+  const connMenu = (conn: Connection): MenuItemSpec[] => {
+    if (!connected[conn.id]) return editCopyDelete(conn);
+    return [
+      {
+        label: "新建数据库",
+        icon: <Database size={13} />,
+        onClick: () => setCreateDbConn(conn),
+      },
+      {
+        label: "运行 SQL 文件…",
+        icon: <FileCode2 size={13} />,
+        onClick: () => onRunSqlFile(conn),
+      },
+      { separator: true, label: "sep1" },
+      {
+        label: "断开连接",
+        icon: <Unplug size={13} />,
+        onClick: () => void disconnectFrom(conn.id),
+      },
+      { separator: true, label: "sep2" },
+      ...editCopyDelete(conn),
+    ];
+  };
 
   const groupMenu = (group: Group): MenuItemSpec[] => [
     {
@@ -247,7 +274,7 @@ export function Sidebar({
             conn={conn}
             onOpenTable={(db, t) => onOpenTable(conn, db, t)}
             onOpenQuery={(db, sql) => onOpenQuery(conn, db, sql)}
-            onImport={(db, t) => onImport(conn, db, t)}
+    
           />
         )}
       </div>
@@ -378,6 +405,14 @@ export function Sidebar({
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+
+      {createDbConn && (
+        <CreateDatabaseDialog
+          conn={createDbConn}
+          onClose={() => setCreateDbConn(null)}
+          onDone={() => setExpandedConns((s) => ({ ...s, [createDbConn.id]: true }))}
+        />
+      )}
     </aside>
   );
 }

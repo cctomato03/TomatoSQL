@@ -101,6 +101,82 @@ pub async fn db_routines(
     state.conn(&conn_id)?.routines(&database).await
 }
 
+// ---------------- 数据库级 DDL ----------------
+
+fn safe_ident(input: &str) -> String {
+    input
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+        .collect()
+}
+
+#[tauri::command]
+pub async fn db_create_database(
+    state: State<'_, AppState>,
+    conn_id: String,
+    name: String,
+    charset: Option<String>,
+) -> Result<(), String> {
+    let conn = state.conn(&conn_id)?;
+    if conn.engine() == "sqlite" {
+        return Err("SQLite 的数据库就是一个文件，请用「新建数据库」选择新文件路径".into());
+    }
+    let safe = safe_ident(name.trim());
+    if safe.is_empty() {
+        return Err("数据库名不合法".into());
+    }
+    let cs: String = charset
+        .unwrap_or_else(|| "utf8mb4".into())
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect();
+    let cs = if cs.is_empty() { "utf8mb4".to_string() } else { cs };
+    let sql = format!(
+        "CREATE DATABASE {} CHARACTER SET {}",
+        crate::db::quote_ident("mysql", &safe),
+        cs
+    );
+    conn.exec_sql("", &sql).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn db_drop_database(
+    state: State<'_, AppState>,
+    conn_id: String,
+    name: String,
+) -> Result<(), String> {
+    let conn = state.conn(&conn_id)?;
+    if conn.engine() == "sqlite" {
+        return Err("SQLite 数据库即文件；请删除文件或移除对应连接".into());
+    }
+    let safe = safe_ident(name.trim());
+    if safe.is_empty() {
+        return Err("数据库名不合法".into());
+    }
+    let sql = format!("DROP DATABASE IF EXISTS {}", crate::db::quote_ident("mysql", &safe));
+    conn.exec_sql("", &sql).await?;
+    Ok(())
+}
+
+/// 创建（或确认存在）一个 SQLite 数据库文件
+#[tauri::command]
+pub fn db_touch_sqlite_file(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("路径不能为空".into());
+    }
+    let p = std::path::Path::new(&path);
+    if let Some(dir) = p.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("无法创建目录：{e}"))?;
+        }
+    }
+    let conn = rusqlite::Connection::open(p).map_err(|e| format!("无法创建 SQLite 文件：{e}"))?;
+    conn.execute_batch("PRAGMA journal_mode=WAL;")
+        .map_err(|e| format!("初始化失败：{e}"))?;
+    Ok(())
+}
+
 // ---------------- 备份 ----------------
 
 #[tauri::command]

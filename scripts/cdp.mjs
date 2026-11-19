@@ -144,6 +144,21 @@ export class CDP {
     );
   }
 
+  /** 设置第 N 个匹配元素的值（自动区分 input / textarea） */
+  setValue(selector, index, value) {
+    return this.eval(
+      `(() => {
+        const el=document.querySelectorAll(${JSON.stringify(selector)})[${index}];
+        if(!el) return 'not-found';
+        const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto,'value').set.call(el, ${JSON.stringify(value)});
+        el.dispatchEvent(new Event('input',{bubbles:true}));
+        return 'ok';
+      })()`,
+      false,
+    );
+  }
+
   /** 双击某个元素（React onDoubleClick） */
   doubleClick(selector, textInclude = null) {
     return this.eval(
