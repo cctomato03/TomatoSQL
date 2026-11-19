@@ -93,6 +93,63 @@ pub async fn db_indexes(
 }
 
 #[tauri::command]
+pub async fn db_routines(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+) -> Result<Vec<RoutineInfo>, String> {
+    state.conn(&conn_id)?.routines(&database).await
+}
+
+// ---------------- 备份 ----------------
+
+#[tauri::command]
+pub fn backup_list(
+    app: AppHandle,
+    conn_id: String,
+    _database: String,
+) -> Result<Vec<BackupFile>, String> {
+    let dir = store::data_dir(&app)?;
+    Ok(crate::backup::list(&crate::backup::conn_dir(&dir, &conn_id)))
+}
+
+#[tauri::command]
+pub async fn backup_create(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+) -> Result<BackupFile, String> {
+    let conn = state.conn(&conn_id)?;
+    let dir = store::data_dir(&app)?;
+    crate::backup::create(&conn, &dir, &conn_id, &database).await
+}
+
+#[tauri::command]
+pub async fn backup_restore(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    path: String,
+) -> Result<ImportResult, String> {
+    let conn = state.conn(&conn_id)?;
+    crate::backup::restore(&conn, &database, &path).await
+}
+
+#[tauri::command]
+pub fn backup_delete(path: String) -> Result<(), String> {
+    crate::backup::delete(&path)
+}
+
+#[tauri::command]
+pub fn backup_dir(app: AppHandle, conn_id: String) -> Result<String, String> {
+    let dir = store::data_dir(&app)?;
+    let path = crate::backup::conn_dir(&dir, &conn_id);
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub async fn db_ddl(
     state: State<'_, AppState>,
     conn_id: String,

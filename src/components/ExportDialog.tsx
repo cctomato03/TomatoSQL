@@ -97,6 +97,7 @@ export function ExportDialog({ preset, onClose }: { preset: ExportPreset; onClos
         includeHeader,
         delimiter,
         includeStructure,
+        includeData: true,
         nullAs: nullAs || null,
         batchSize: 1000,
       });

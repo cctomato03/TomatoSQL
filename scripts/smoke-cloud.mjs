@@ -159,7 +159,10 @@ const seeded = await cdp.eval(`(async () => {
 check("预置本地连接", seeded >= 1, `${seeded} 个连接`);
 
 // ---------- 3. 打开云同步对话框并操作 ----------
-check("打开云同步对话框", (await cdp.clickText("云同步")) === "ok");
+check("打开云同步对话框", (await cdp.eval(
+  `(() => { const b=document.querySelector('[title="云同步"]'); if(!b) return 'not-found'; b.click(); return 'ok'; })()`,
+  false,
+)) === "ok");
 const dialogShown = await cdp.waitFor(
   async () => (await cdp.dialogText()).includes("同步口令"),
   8000,
@@ -227,7 +230,12 @@ const afterCount = await cdp.eval(
 check("合并后本地数据完好", afterCount >= 1, `${afterCount} 个连接`);
 
 // 关闭对话框
-check("关闭对话框", (await cdp.clickText("关闭")) === "ok");
+check("关闭对话框", (await cdp.eval(
+  `(() => { const root=document.querySelector('.dialog-foot');
+     const b=root && [...root.querySelectorAll('button')].find(x=>x.textContent.includes('关闭'));
+     if(!b) return 'not-found'; b.click(); return 'ok'; })()`,
+  false,
+)) === "ok");
 
 // 前端错误
 const errors = cdp.events

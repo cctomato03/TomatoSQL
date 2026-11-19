@@ -116,8 +116,10 @@ async fn sqlite_export_and_import() {
             include_header: true,
             delimiter: ",".into(),
             include_structure: false,
+            include_data: true,
             null_as: None,
             batch_size: 100,
+            single_file: false,
         },
     )
     .await
@@ -143,8 +145,10 @@ async fn sqlite_export_and_import() {
             include_header: true,
             delimiter: ",".into(),
             include_structure: false,
+            include_data: true,
             null_as: None,
             batch_size: 100,
+            single_file: false,
         },
     )
     .await
@@ -167,8 +171,10 @@ async fn sqlite_export_and_import() {
             include_header: true,
             delimiter: ",".into(),
             include_structure: true,
+            include_data: true,
             null_as: None,
             batch_size: 100,
+            single_file: false,
         },
     )
     .await
@@ -460,6 +466,77 @@ async fn insert_row_with_values() {
         &[PkPair { column: "name".into(), value: Some("a".into()) }],
     );
     assert_eq!(mysql_vals, "INSERT INTO `db1`.`t3` (`name`) VALUES ('a')");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn export_structure_only_and_backup() {
+    let dir = temp_dir();
+    let conn = open(&dir.join("a.db")).await;
+    seed(&conn).await;
+
+    // 只导出结构：有 CREATE TABLE，但没有 INSERT
+    let sql_path = dir.join("structure.sql").to_string_lossy().to_string();
+    let out = crate::transfer::export(
+        &conn,
+        &ExportRequest {
+            conn_id: "t".into(),
+            database: "main".into(),
+            tables: vec!["users".into()],
+            sql: None,
+            format: "sql".into(),
+            file_path: sql_path.clone(),
+            include_header: true,
+            delimiter: ",".into(),
+            include_structure: true,
+            include_data: false,
+            null_as: None,
+            batch_size: 100,
+            single_file: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.rows, 0, "只导出结构时不应写入数据行");
+    let text = std::fs::read_to_string(&sql_path).unwrap();
+    assert!(text.to_uppercase().contains("CREATE TABLE"));
+    assert!(!text.contains("INSERT INTO"));
+
+    // 备份：整库导出 + 列表 + 恢复（先建第二张表，验证多表写进同一个文件）
+    conn.exec_sql("", "CREATE TABLE t2 (a INTEGER, b TEXT);")
+        .await
+        .unwrap();
+    conn.exec_sql("", "INSERT INTO t2 (a, b) VALUES (1, 'x');")
+        .await
+        .unwrap();
+    let backup = crate::backup::create(&conn, &dir, "conn-1", "main").await.unwrap();
+    assert!(backup.size > 0);
+    assert!(backup.path.ends_with(".sql"));
+    // 多表也必须写进同一个备份文件（single_file），且包含所有表
+    let dump = std::fs::read_to_string(&backup.path).unwrap();
+    assert!(dump.contains("INSERT INTO \"users\""), "备份应包含 users 数据");
+    assert!(dump.contains("INSERT INTO \"t2\""), "备份应包含 t2 数据");
+
+    let listed = crate::backup::list(&crate::backup::conn_dir(&dir, "conn-1"));
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, backup.name);
+
+    // 破坏数据后用备份恢复
+    conn.exec_sql("main", "DELETE FROM users").await.unwrap();
+    assert_eq!(conn.row_count("main", "users").await.unwrap(), 0);
+    let res = crate::backup::restore(&conn, "main", &backup.path).await.unwrap();
+    assert!(res.failed == 0, "恢复失败: {:?}", res.errors);
+    assert_eq!(conn.row_count("main", "users").await.unwrap(), 3);
+
+    // 删除备份
+    crate::backup::delete(&backup.path).unwrap();
+    assert!(crate::backup::list(&crate::backup::conn_dir(&dir, "conn-1")).is_empty());
+    // 只允许删 .sql
+    assert!(crate::backup::delete("C:/whatever.txt").is_err());
+
+    // SQLite 没有存储函数
+    assert!(conn.routines("main").await.unwrap().is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

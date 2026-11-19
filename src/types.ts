@@ -54,6 +54,7 @@ export interface Workspace {
   version: number;
   groups: Group[];
   connections: Connection[];
+  savedQueries: SavedQuery[];
   settings: Settings;
   updatedAt: number;
 }
@@ -96,6 +97,30 @@ export interface IndexInfo {
   columns: string[];
   unique: boolean;
   primary: boolean;
+}
+
+export interface RoutineInfo {
+  name: string;
+  /** FUNCTION | PROCEDURE */
+  kind: string;
+  returns?: string | null;
+}
+
+export interface BackupFile {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt: number;
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  connId: string;
+  database: string;
+  sql: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ColumnMeta {
@@ -152,6 +177,7 @@ export interface ExportRequest {
   includeHeader: boolean;
   delimiter: string;
   includeStructure: boolean;
+  includeData: boolean;
   nullAs?: string | null;
   batchSize: number;
 }

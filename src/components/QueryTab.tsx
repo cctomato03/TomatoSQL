@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Eraser, Play, SquareTerminal, Rows3 } from "lucide-react";
+import { Download, Eraser, Play, Save, SquareTerminal, Rows3 } from "lucide-react";
 import { api } from "../api";
 import { useStore, type Tab } from "../store";
 import type { Connection, QueryResult } from "../types";
 import { DataGrid } from "./DataGrid";
+import { Modal } from "./ui";
 
 export function QueryTab({
   tab,
@@ -16,6 +17,7 @@ export function QueryTab({
 }) {
   const notify = useStore((s) => s.notify);
   const patchTab = useStore((s) => s.patchTab);
+  const addSavedQuery = useStore((s) => s.addSavedQuery);
   const showLineNumbers = useStore((s) => s.ws.settings.showLineNumbers);
 
   const [sql, setSql] = useState(tab.sql ?? "");
@@ -28,6 +30,7 @@ export function QueryTab({
   const [duration, setDuration] = useState<number | null>(null);
   const [maxRows, setMaxRows] = useState(5000);
   const [editorHeight, setEditorHeight] = useState(180);
+  const [saveName, setSaveName] = useState<string | null>(null);
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
@@ -175,6 +178,14 @@ export function QueryTab({
         >
           <Download size={13} /> 导出结果
         </button>
+        <button
+          className="btn sm"
+          disabled={!sql.trim()}
+          onClick={() => setSaveName(`查询 ${new Date().toLocaleTimeString()}`)}
+          title="保存到左侧栏的『查询』节点"
+        >
+          <Save size={13} /> 保存查询
+        </button>
       </div>
 
       <div className="editor-area" style={{ height: editorHeight }}>
@@ -267,6 +278,57 @@ export function QueryTab({
           <div className="pager">耗时 {duration}ms</div>
         )}
       </div>
+
+      {saveName !== null && (
+        <Modal
+          title="保存查询"
+          size="sm"
+          onClose={() => setSaveName(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setSaveName(null)}>
+                取消
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  const name = saveName.trim();
+                  if (!name) {
+                    notify("请填写查询名称", "err");
+                    return;
+                  }
+                  addSavedQuery({ name, connId: conn.id, database, sql });
+                  notify(`已保存查询「${name}」到左侧『查询』节点`, "ok");
+                  setSaveName(null);
+                }}
+              >
+                保存
+              </button>
+            </>
+          }
+        >
+          <div className="field-hint" style={{ marginBottom: "0.5rem" }}>
+            保存到左侧栏 {conn.name} → {database || "（默认库）"} → 查询，之后双击即可再次打开。
+          </div>
+          <input
+            className="input"
+            autoFocus
+            placeholder="查询名称"
+            value={saveName}
+            onChange={(e) => setSaveName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                (e.currentTarget as HTMLInputElement).blur();
+                const name = saveName.trim();
+                if (!name) return;
+                addSavedQuery({ name, connId: conn.id, database, sql });
+                notify(`已保存查询「${name}」到左侧『查询』节点`, "ok");
+                setSaveName(null);
+              }
+            }}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

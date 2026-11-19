@@ -204,6 +204,24 @@ pub async fn ddl(pool: &Pool, db: &str, table: &str) -> Result<String, String> {
         .unwrap_or_else(|| "-- 无法获取建表语句".into()))
 }
 
+/// 存储函数 / 存储过程
+pub async fn routines(pool: &Pool, db: &str) -> Result<Vec<RoutineInfo>, String> {
+    let mut conn = pool.get_conn().await.map_err(err)?;
+    let sql = "SELECT ROUTINE_NAME, ROUTINE_TYPE, \
+               IFNULL(DTD_IDENTIFIER, '') AS returns_type \
+               FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? \
+               ORDER BY ROUTINE_TYPE, ROUTINE_NAME";
+    let rows: Vec<MyRow> = conn.exec(sql, (db,)).await.map_err(err)?;
+    Ok(rows
+        .iter()
+        .map(|r| RoutineInfo {
+            name: get(r, 0).unwrap_or_default(),
+            kind: get(r, 1).unwrap_or_else(|| "FUNCTION".into()),
+            returns: get(r, 2),
+        })
+        .collect())
+}
+
 pub async fn row_count(pool: &Pool, db: &str, table: &str) -> Result<i64, String> {
     let mut conn = pool.get_conn().await.map_err(err)?;
     let sql = format!(

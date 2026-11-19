@@ -1137,6 +1137,41 @@ textarea {
   flex: 0 0 auto;
 }
 
+/* 分组标题：表 / 视图 / 函数 / 查询 / 备份 */
+.sb-section {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  height: 1.7rem;
+  padding: 0 0.3rem;
+  border-radius: 0.32rem;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.sb-section:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.sb-section .obj-count {
+  font-weight: 400;
+}
+
+/* 「新建查询…」「立即备份…」这类可点操作行 */
+.sb-action .tree-label {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.sb-action:hover .tree-label {
+  color: var(--accent);
+  font-style: normal;
+}
+
 .sb-tree-foot {
   display: flex;
   align-items: center;

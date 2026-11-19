@@ -178,8 +178,29 @@ pub struct Workspace {
     pub groups: Vec<Group>,
     #[serde(default)]
     pub connections: Vec<Connection>,
+    /// 保存的查询（类似 Navicat 的「查询」节点）
+    #[serde(default)]
+    pub saved_queries: Vec<SavedQuery>,
     #[serde(default)]
     pub settings: Settings,
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedQuery {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub conn_id: String,
+    #[serde(default)]
+    pub database: String,
+    #[serde(default)]
+    pub sql: String,
+    #[serde(default)]
+    pub created_at: i64,
     #[serde(default)]
     pub updated_at: i64,
 }
@@ -194,6 +215,7 @@ impl Default for Workspace {
             version: 1,
             groups: Vec::new(),
             connections: Vec::new(),
+            saved_queries: Vec::new(),
             settings: Settings::default(),
             updated_at: now_ms(),
         }
@@ -249,6 +271,27 @@ pub struct IndexInfo {
     pub columns: Vec<String>,
     pub unique: bool,
     pub primary: bool,
+}
+
+/// 存储函数 / 存储过程
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineInfo {
+    pub name: String,
+    /// FUNCTION | PROCEDURE
+    pub kind: String,
+    pub returns: Option<String>,
+}
+
+/// 备份文件（SQL 转储）
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupFile {
+    pub name: String,
+    pub path: String,
+    pub size: i64,
+    /// 毫秒时间戳
+    pub modified_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -333,10 +376,16 @@ pub struct ExportRequest {
     pub delimiter: String,
     #[serde(default)]
     pub include_structure: bool,
+    /// 是否导出数据行（false = 只导出结构）
+    #[serde(default = "default_true")]
+    pub include_data: bool,
     #[serde(default)]
     pub null_as: Option<String>,
     #[serde(default = "default_batch")]
     pub batch_size: i64,
+    /// 多表导出时是否强制写入同一个文件（备份用；CSV/SQL 有效）
+    #[serde(default)]
+    pub single_file: bool,
 }
 
 fn default_delim() -> String {

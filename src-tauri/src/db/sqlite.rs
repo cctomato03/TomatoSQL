@@ -211,6 +211,11 @@ pub async fn ddl(conn: SqliteHandle, _db: &str, table: &str) -> Result<String, S
     .await
 }
 
+/// SQLite 没有存储函数/过程（内置函数无法枚举），返回空列表
+pub async fn routines(_conn: SqliteHandle, _db: &str) -> Result<Vec<RoutineInfo>, String> {
+    Ok(Vec::new())
+}
+
 pub async fn row_count(conn: SqliteHandle, _db: &str, table: &str) -> Result<i64, String> {
     let table = table.to_string();
     run(conn, move |c| {

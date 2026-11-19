@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { TerminalSquare } from "lucide-react";
 import { connectTo, openQuery, openTable } from "./actions";
 import { newConnection, useStore } from "./store";
 import type { Connection, Group } from "./types";
@@ -16,7 +17,6 @@ import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { TablePanel } from "./components/TablePanel";
 import { TopBar } from "./components/TopBar";
-import { Welcome } from "./components/Welcome";
 import { Modal, Toasts } from "./components/ui";
 import { getTheme } from "./themes";
 
@@ -84,16 +84,19 @@ export default function App() {
         </div>
       );
     }
-    if (!tab) return null;
+    if (!tab) {
+      return (
+        <div className="empty">
+          <div className="empty-title">还没有打开任何对象</div>
+          <div className="empty-text">
+            在左侧栏双击连接展开数据库，双击表即可在新标签页查看数据；也可以用连接行的
+            <TerminalSquare size={12} style={{ verticalAlign: "-2px", margin: "0 0.15rem" }} />
+            按钮新建查询。
+          </div>
+        </div>
+      );
+    }
     switch (tab.kind) {
-      case "welcome":
-        return (
-          <Welcome
-            onNewConnection={(kind) => setConnDialog({ conn: newConnection(kind), groupId: null })}
-            onOpenCloud={() => setCloudOpen(true)}
-            onOpenSync={() => setSyncOpen({})}
-          />
-        );
       case "connection":
         return openConnectionTabById(tab.connId);
       case "table": {

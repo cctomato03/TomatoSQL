@@ -1,4 +1,4 @@
-import { Home, Plug, Table2, TerminalSquare, X } from "lucide-react";
+import { Plug, Table2, TerminalSquare, X } from "lucide-react";
 import { useStore, type Tab } from "../store";
 
 function TabIcon({ tab }: { tab: Tab }) {
@@ -8,10 +8,8 @@ function TabIcon({ tab }: { tab: Tab }) {
       return <Plug size={size} />;
     case "table":
       return <Table2 size={size} />;
-    case "query":
-      return <TerminalSquare size={size} />;
     default:
-      return <Home size={size} />;
+      return <TerminalSquare size={size} />;
   }
 }
 
@@ -29,24 +27,22 @@ export function TabBar() {
           className={`tab ${t.id === activeTab ? "active" : ""}`}
           onClick={() => activate(t.id)}
           onAuxClick={(e) => {
-            if (e.button === 1 && t.kind !== "welcome") close(t.id);
+            if (e.button === 1) close(t.id);
           }}
           title={t.title}
         >
           <TabIcon tab={t} />
           <span className="tab-title">{t.title}</span>
-          {t.kind !== "welcome" && (
-            <button
-              className="tab-close"
-              onClick={(e) => {
-                e.stopPropagation();
-                close(t.id);
-              }}
-              title="关闭"
-            >
-              <X size={11} />
-            </button>
-          )}
+          <button
+            className="tab-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              close(t.id);
+            }}
+            title="关闭"
+          >
+            <X size={11} />
+          </button>
         </div>
       ))}
     </div>

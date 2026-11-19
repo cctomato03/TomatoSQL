@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
   ApplyResult,
+  BackupFile,
   ColumnInfo,
   CompareReport,
   Connection,
@@ -13,6 +14,7 @@ import type {
   IndexInfo,
   PkPair,
   QueryResult,
+  RoutineInfo,
   RowChange,
   RowsPage,
   SyncRequest,
@@ -53,6 +55,8 @@ export const api = {
     call<ColumnInfo[]>("db_columns", { connId, database, table }),
   indexes: (connId: string, database: string, table: string) =>
     call<IndexInfo[]>("db_indexes", { connId, database, table }),
+  routines: (connId: string, database: string) =>
+    call<RoutineInfo[]>("db_routines", { connId, database }),
   ddl: (connId: string, database: string, table: string) =>
     call<string>("db_ddl", { connId, database, table }),
   rowCount: (connId: string, database: string, table: string) =>
@@ -102,6 +106,16 @@ export const api = {
     compareData: boolean;
   }) => call<CompareReport>("db_compare", { req }),
   applySync: (req: SyncRequest) => call<SyncResult>("db_apply_sync", { req }),
+
+  // 备份
+  backupList: (connId: string, database: string) =>
+    call<BackupFile[]>("backup_list", { connId, database }),
+  backupCreate: (connId: string, database: string) =>
+    call<BackupFile>("backup_create", { connId, database }),
+  backupRestore: (connId: string, database: string, path: string) =>
+    call<ImportResult>("backup_restore", { connId, database, path }),
+  backupDelete: (path: string) => call<void>("backup_delete", { path }),
+  backupDir: (connId: string) => call<string>("backup_dir", { connId }),
 };
 
 export type { Group };

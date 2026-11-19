@@ -110,8 +110,14 @@ impl Conn {
         }
     }
 
-    pub async fn ddl(&self, db: &str, table: &str) -> Result<String, String> {
+    pub async fn routines(&self, db: &str) -> Result<Vec<RoutineInfo>, String> {
         match self {
+            Conn::MySql(pool) => mysql::routines(pool, db).await,
+            Conn::Sqlite(conn) => sqlite::routines(conn.clone(), db).await,
+        }
+    }
+
+    pub async fn ddl(&self, db: &str, table: &str) -> Result<String, String> {        match self {
             Conn::MySql(pool) => mysql::ddl(pool, db, table).await,
             Conn::Sqlite(conn) => sqlite::ddl(conn.clone(), db, table).await,
         }

@@ -1,3 +1,4 @@
+mod backup;
 mod commands;
 mod crypto;
 mod db;
@@ -37,6 +38,12 @@ pub fn run() {
             commands::db_tables,
             commands::db_columns,
             commands::db_indexes,
+            commands::db_routines,
+            commands::backup_list,
+            commands::backup_create,
+            commands::backup_restore,
+            commands::backup_delete,
+            commands::backup_dir,
             commands::db_ddl,
             commands::db_query,
             commands::db_fetch_rows,

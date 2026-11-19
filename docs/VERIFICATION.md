@@ -9,7 +9,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
 ```
-running 9 tests
+running 10 tests
 test tests::split_statements_handles_quotes_and_comments ... ok
 test tests::crypto_roundtrip ... ok
 test tests::workspace_file_encrypts_password ... ok
@@ -18,11 +18,12 @@ test tests::apply_row_changes_via_sql ... ok
 test tests::insert_row_with_values ... ok
 test tests::import_csv_without_header_uses_target_columns ... ok
 test tests::sqlite_export_and_import ... ok
+test tests::export_structure_only_and_backup ... ok
 test tests::sqlite_compare_and_sync ... ok
-test result: ok. 9 passed; 0 failed
+test result: ok. 10 passed; 0 failed
 ```
 
-覆盖：SQLite 元数据（表/列/索引/DDL）、多语句拆分、分页与计数、NULL 保留、CSV/JSON/SQL 导出（含引号转义、合法 JSON）、CSV→自动建表导入、无表头导入、SQL 脚本导入、结构比较、跨文件同步与数据复制、AES-GCM 加解密、密码加密落盘/解密往返、INSERT 语句生成（双引擎语法 + 带值/NULL/转义 + NOT NULL 校验）、SQL 词法拆分（引号与注释内的分号）。
+覆盖：SQLite 元数据（表/列/索引/DDL）、多语句拆分、分页与计数、NULL 保留、CSV/JSON/SQL 导出（含引号转义、合法 JSON）、仅结构导出（不写 INSERT）、CSV→自动建表导入、无表头导入、SQL 脚本导入、结构比较、跨文件同步与数据复制、AES-GCM 加解密、密码加密落盘/解密往返、INSERT 语句生成（双引擎语法 + 带值/NULL/转义 + NOT NULL 校验）、整库备份（多表写入同一文件）/列出/恢复/删除、SQLite 无存储函数、SQL 词法拆分。
 
 ## 2. 云同步服务端测试（Node）
 
@@ -54,7 +55,7 @@ node scripts\smoke.mjs
 
 `scripts/smoke.mjs`（26 项）覆盖：React 挂载、顶栏/侧栏/状态栏渲染、Tauri IPC、`app_info`、`ws_load`、SQLite 连接、`db_databases/tables/columns/fetch_rows/apply_changes`、CSV 导出内容、JSON 导出合法性、CSV 导入、`db_compare`、`ws_save/ws_load` 往返、密码内存明文 + 磁盘密文、断开、主题变量注入、无前端运行时错误。
 
-`scripts/smoke-ui.mjs`（57 项）覆盖真实交互：新建连接对话框 → 保存 → **左侧栏内嵌库/表树**（单击连接只选中、双击连接连接并展开库、单击库只选中、双击库展开表、**表名与库名左边界坐标严格对齐**、不再有独立对象面板）→ 双击表在**独立标签页**打开且**左侧库表列表仍可见** → 数据网格/分页/NULL 显示 → **Navicat 风格排序/筛选面板（选字段+操作符+值，多条件 AND/OR）** → **新增行弹窗（逐列 默认值/输入/NULL）** → 删除行（应用内确认）→ 结构/DDL 子标签 → 导出对话框格式顺序 SQL/CSV/JSON → 连接行按钮新建查询并执行 → 设置里切换主题与字号并持久化。
+`scripts/smoke-ui.mjs`（90 项）覆盖真实交互：**启动时无欢迎页**（0 个标签 + 空状态提示）→ 新建连接 → 左侧栏双击连接展开库 → **右键只弹出一个菜单**（含"导出数据库（仅结构）/（结构 + 数据）/运行 SQL 语句/运行 SQL 文件"，且不含"新建连接/新建分组"）→ 库下 5 个分组 **表/视图/函数/查询/备份** → 双击表在独立标签页打开且左侧列表仍在 → **表名与库名左边界坐标严格对齐** → 数据网格/分页/NULL → 结构化排序筛选（选字段+操作符+值，多条件 AND/OR）→ 新增行弹窗 → 删除行（应用内确认）→ 结构/DDL → 导出对话框格式顺序 SQL/CSV/JSON → 查询并**保存查询**（应用内命名弹窗，落到工作区并出现在左栏"查询"分组）→ **立即备份生成 .sql 并出现在"备份"分组** → 主题/字号切换并持久化。
 
 `scripts/smoke-cloud.mjs` 覆盖云同步全链路：启动本地同步服务 → 界面里注册登录 → 上传（服务端落盘只有密文，无法搜到明文密码/连接名）→ 智能合并（口令解密成功）→ 无前端错误。
 

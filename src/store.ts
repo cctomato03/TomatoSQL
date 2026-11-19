@@ -4,7 +4,7 @@ import { invalidateConnCache } from "./explorerCache";
 import { applyTheme } from "./themes";
 import type { AppInfo, Connection, Group, Settings, TestResult, Workspace } from "./types";
 
-export type TabKind = "welcome" | "connection" | "table" | "query";
+export type TabKind = "connection" | "table" | "query";
 
 export interface Tab {
   id: string;
@@ -39,6 +39,7 @@ export function emptyWorkspace(): Workspace {
     version: 1,
     groups: [],
     connections: [],
+    savedQueries: [],
     settings: { ...DEFAULT_SETTINGS },
     updatedAt: Date.now(),
   };
@@ -104,6 +105,8 @@ interface Store {
   upsertGroup: (group: Group) => void;
   removeGroup: (id: string, deleteChildren: boolean) => void;
   replaceWorkspace: (ws: Workspace) => void;
+  addSavedQuery: (q: { name: string; connId: string; database: string; sql: string }) => void;
+  removeSavedQuery: (id: string) => void;
 
   openTab: (tab: Omit<Tab, "id"> & { id?: string }) => void;
   closeTab: (id: string) => void;
@@ -125,8 +128,8 @@ export const useStore = create<Store>((set, get) => ({
   ready: false,
   ws: emptyWorkspace(),
   info: null,
-  tabs: [{ id: "welcome", kind: "welcome", title: "欢迎" }],
-  activeTab: "welcome",
+  tabs: [],
+  activeTab: "",
   connected: {},
   busy: {},
   toasts: [],
@@ -217,8 +220,32 @@ export const useStore = create<Store>((set, get) => ({
       ...ws,
       settings: { ...get().ws.settings, ...ws.settings },
     };
-    set({ ws: merged, tabs: [{ id: "welcome", kind: "welcome", title: "欢迎" }], activeTab: "welcome", connected: {} });
+    set({ ws: merged, tabs: [], activeTab: "", connected: {} });
     applyTheme(merged.settings.themeId, merged.settings.fontSize, merged.settings.editorFontSize);
+    get().persist();
+  },
+
+  addSavedQuery: ({ name, connId, database, sql }) => {
+    const ts = Date.now();
+    const ws = get().ws;
+    const existing = (ws.savedQueries ?? []).find(
+      (q) => q.connId === connId && q.database === database && q.name === name,
+    );
+    const savedQueries = existing
+      ? (ws.savedQueries ?? []).map((q) =>
+          q.id === existing.id ? { ...q, sql, updatedAt: ts } : q,
+        )
+      : [
+          ...(ws.savedQueries ?? []),
+          { id: uid(), name, connId, database, sql, createdAt: ts, updatedAt: ts },
+        ];
+    set({ ws: { ...ws, savedQueries } });
+    get().persist();
+  },
+
+  removeSavedQuery: (id) => {
+    const ws = get().ws;
+    set({ ws: { ...ws, savedQueries: (ws.savedQueries ?? []).filter((q) => q.id !== id) } });
     get().persist();
   },
 
@@ -240,10 +267,10 @@ export const useStore = create<Store>((set, get) => ({
 
   closeTab: (id) => {
     const tabs = get().tabs.filter((t) => t.id !== id);
-    const nextTabs = tabs.length ? tabs : [{ id: "welcome", kind: "welcome" as TabKind, title: "欢迎" }];
+    const nextTabs = tabs;
     let active = get().activeTab;
     if (active === id) {
-      active = nextTabs[Math.max(0, nextTabs.length - 1)].id;
+      active = nextTabs.length ? nextTabs[Math.max(0, nextTabs.length - 1)].id : "";
     }
     set({ tabs: nextTabs, activeTab: active });
   },
@@ -255,13 +282,11 @@ export const useStore = create<Store>((set, get) => ({
 
   closeTabsOfConn: (connId) => {
     const remaining = get().tabs.filter((t) => t.connId !== connId);
-    const nextTabs = remaining.length
-      ? remaining
-      : [{ id: "welcome", kind: "welcome" as TabKind, title: "欢迎" }];
+    const nextTabs = remaining;
     const activeStillOpen = nextTabs.some((t) => t.id === get().activeTab);
     set({
       tabs: nextTabs,
-      activeTab: activeStillOpen ? get().activeTab : nextTabs[nextTabs.length - 1].id,
+      activeTab: activeStillOpen ? get().activeTab : nextTabs.length ? nextTabs[nextTabs.length - 1].id : "",
     });
   },
 

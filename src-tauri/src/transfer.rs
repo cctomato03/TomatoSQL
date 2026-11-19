@@ -198,7 +198,9 @@ pub async fn export(conn: &Conn, req: &ExportRequest) -> Result<ExportResult, St
     if req.tables.is_empty() {
         return Err("没有选择要导出的表".into());
     }
-    let multi = req.tables.len() > 1;
+    // 多表默认拆成多个文件；single_file 时（例如整库备份）强制写进一个文件
+    // JSON 的多表结构是「表名 → 数组」，不支持合并到单文件，因此对 json 保持原行为
+    let multi = req.tables.len() > 1 && !(req.single_file && req.format != "json");
 
     // 2) JSON 多表：输出为 { "表名": [ {...} ] }
     if req.format == "json" && multi {
@@ -250,16 +252,30 @@ pub async fn export(conn: &Conn, req: &ExportRequest) -> Result<ExportResult, St
         });
     }
 
-    // 3) 逐表导出（CSV / SQL / 单表 JSON，多表时拆成多个文件）
+    // 3) 逐表导出（CSV / SQL / 单表 JSON）
+    //    多表默认每个表一个文件；single_file 时（例如整库备份）所有表写进同一个文件，
+    //    所以这里只创建一次写入器，避免后一个表把前一个表的内容截断。
+    let mut shared: Option<BufWriter<File>> = None;
+    if !multi {
+        shared = Some(BufWriter::new(
+            File::create(&req.file_path)
+                .map_err(|e| format!("无法创建文件（{}）：{e}", req.file_path))?,
+        ));
+    }
     for table in &req.tables {
         let path = if multi {
             per_table_path(&req.file_path, table)
         } else {
             req.file_path.clone()
         };
-        let mut w = BufWriter::new(
-            File::create(&path).map_err(|e| format!("无法创建文件（{path}）：{e}"))?,
-        );
+        let mut local: Option<BufWriter<File>> = None;
+        let mut w: &mut BufWriter<File> = if multi {
+            local.insert(BufWriter::new(
+                File::create(&path).map_err(|e| format!("无法创建文件（{path}）：{e}"))?,
+            ))
+        } else {
+            shared.as_mut().unwrap()
+        };
         let cols = conn.columns(&req.database, table).await?;
         let colnames: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
         let mut state = FileState::new();
@@ -282,7 +298,7 @@ pub async fn export(conn: &Conn, req: &ExportRequest) -> Result<ExportResult, St
 
         let mut offset = 0i64;
         let batch = req.batch_size.clamp(100, 20000);
-        loop {
+        while req.include_data {
             let rows = conn
                 .select_columns(&req.database, table, &[], batch, offset)
                 .await?;

@@ -158,6 +158,22 @@ export class CDP {
     );
   }
 
+  /** 在指定容器内点击包含文本的按钮（避免命中页面上同名的其它按钮） */
+  clickIn(selector, text) {
+    return this.eval(
+      `(() => {
+        const root=document.querySelector(${JSON.stringify(selector)});
+        if(!root) return 'no-root';
+        const list=[...root.querySelectorAll('button')];
+        const el=list.find(b=>b.textContent.includes(${JSON.stringify(text)}));
+        if(!el) return 'not-found';
+        el.click();
+        return 'ok';
+      })()`,
+      false,
+    );
+  }
+
   /** 单击包含指定文本的元素 */
   clickSel(selector, textInclude) {
     return this.eval(
