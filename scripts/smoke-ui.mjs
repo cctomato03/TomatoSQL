@@ -86,9 +86,13 @@ check("已连接菜单不再有导入导出/结构同步", !openMenu.includes("�
 await closeMenu();
 
 // ---------- 数据库打开/关闭 + 菜单 ----------
-check("单击数据库打开", (await cdp.clickSel(".sb-db", "main")) === "ok");
+check("单击数据库只选中", (await cdp.clickSel(".sb-db", "main")) === "ok");
+await sleep(400);
+check("单击后高亮选中", (await cdp.count(".sb-db.active")) === 1, `${await cdp.count(".sb-db.active")} 个`);
+check("单击不打开（无分组）", (await cdp.count(".sb-section")) === 0, `${await cdp.count(".sb-section")} 个分组`);
+check("双击数据库打开", (await cdp.doubleClick(".sb-db", "main")) === "ok");
 const opened = await cdp.waitFor(async () => (await cdp.count(".sb-section")) === 5, 15000, "五个分组");
-check("单击后打开（5 个分组）", opened, `${await cdp.count(".sb-section")} 个分组`);
+check("双击后打开（5 个分组）", opened, `${await cdp.count(".sb-section")} 个分组`);
 
 check("右键数据库", (await rightClick(".sb-db", "main")) === "ok");
 await sleep(300);
@@ -192,13 +196,17 @@ check(
 // ---------- 重新打开，验证数据网格与筛选排序 ----------
 check("双击连接重新打开", (await cdp.doubleClick(".tree-row", "UI 测试库")) === "ok");
 await cdp.waitFor(async () => (await cdp.count(".sb-db")) > 0, 20000, "库节点");
-check("打开数据库", (await cdp.clickSel(".sb-db", "main")) === "ok");
+check("双击打开数据库", (await cdp.doubleClick(".sb-db", "main")) === "ok");
 await cdp.waitFor(async () => (await cdp.count(".sb-section")) === 5, 15000, "分组");
 await cdp.eval(
   `(() => { const s=[...document.querySelectorAll('.sb-section')].find(e=>e.textContent.includes('表')); s?.click(); return 'ok'; })()`,
   false,
 );
 await cdp.waitFor(async () => (await cdp.count(".sb-table")) > 0, 10000, "表节点");
+check("单击表只选中", (await cdp.clickSel(".sb-table", "ui_users")) === "ok");
+await sleep(300);
+check("表高亮选中", (await cdp.count(".sb-table.active")) === 1, `${await cdp.count(".sb-table.active")} 个`);
+check("单击表不打开数据", (await cdp.count(".grid")) === 0, `${await cdp.count(".grid")} 个网格`);
 check("双击表打开数据", (await cdp.doubleClick(".sb-table", "ui_users")) === "ok");
 check("数据网格", await cdp.waitFor(async () => (await cdp.count(".grid tbody tr")) > 0, 15000, "网格"));
 check("数据正确", (await cdp.text(".grid")).includes("Alice"));

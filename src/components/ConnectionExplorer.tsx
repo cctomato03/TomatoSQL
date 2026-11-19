@@ -68,6 +68,14 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItemSpec[] } | null>(null);
   const [scriptDialog, setScriptDialog] = useState<ScriptDialog>(null);
+  /** 当前选中项：单击只做选中，双击才打开 */
+  const [sel, setSel] = useState<
+    | { kind: "db"; db: string }
+    | { kind: "table"; db: string; name: string }
+    | { kind: "query"; db: string; id: string }
+    | { kind: "backup"; db: string; path: string }
+    | null
+  >(null);
 
   const loadDatabases = useCallback(
     async (force = false) => {
@@ -473,11 +481,13 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
         return (
           <div key={db}>
             <div
-              className={`sb-db ${isOpen ? "opened" : ""}`}
-              onClick={() => void (isOpen ? closeDatabase(db) : openDatabase(db))}
-              onDoubleClick={() => void openDatabase(db)}
+              className={`sb-db ${isOpen ? "opened" : ""} ${
+                sel?.kind === "db" && sel.db === db ? "active" : ""
+              }`}
+              onClick={() => setSel({ kind: "db", db })}
+              onDoubleClick={() => void (isOpen ? closeDatabase(db) : openDatabase(db))}
               onContextMenu={(e) => openMenuAt(e, dbMenu(db))}
-              title={`${db}（单击打开/关闭，右键更多操作）`}
+              title={`${db}（单击选中，双击打开/关闭，右键更多操作）`}
             >
               <span className={`obj-chev ${isOpen ? "open" : ""}`} style={{ width: "0.8rem" }}>
                 <ChevronRight size={12} />
@@ -501,7 +511,8 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
                     {tableList.map((t) => (
                       <div
                         key={t.name}
-                        className="sb-table"
+                        className={`sb-table ${sel?.kind === "table" && sel.db === db && sel.name === t.name ? "active" : ""}`}
+                        onClick={() => setSel({ kind: "table", db, name: t.name })}
                         onDoubleClick={() => onOpenTable(db, t.name)}
                         onContextMenu={(e) =>
                           openMenuAt(e, newOnlyMenu(db, "新建表", () =>
@@ -528,7 +539,8 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
                     {viewList.map((t) => (
                       <div
                         key={t.name}
-                        className="sb-table"
+                        className={`sb-table ${sel?.kind === "table" && sel.db === db && sel.name === t.name ? "active" : ""}`}
+                        onClick={() => setSel({ kind: "table", db, name: t.name })}
                         onDoubleClick={() => onOpenTable(db, t.name)}
                         onContextMenu={(e) =>
                           openMenuAt(e, newOnlyMenu(db, "新建视图", () =>
@@ -591,7 +603,8 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
                     {myQueries.map((q) => (
                       <div
                         key={q.id}
-                        className="sb-table"
+                        className={`sb-table ${sel?.kind === "query" && sel.id === q.id ? "active" : ""}`}
+                        onClick={() => setSel({ kind: "query", db, id: q.id })}
                         onDoubleClick={() => onOpenQuery(db, q.sql)}
                         onContextMenu={(e) =>
                           openMenuAt(e, [
@@ -638,7 +651,8 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
                     {backupList.map((f) => (
                       <div
                         key={f.path}
-                        className="sb-table"
+                        className={`sb-table ${sel?.kind === "backup" && sel.path === f.path ? "active" : ""}`}
+                        onClick={() => setSel({ kind: "backup", db, path: f.path })}
                         onDoubleClick={() => void restoreBackup(db, f)}
                         onContextMenu={(e) =>
                           openMenuAt(e, [
