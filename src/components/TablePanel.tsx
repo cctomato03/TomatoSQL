@@ -119,6 +119,12 @@ export function TablePanel({ conn, database, table, onExport, onImport, defaultT
     void loadData();
   }, [loadData]);
 
+  // 左栏「刷新表数据」会 bump 这个令牌，触发当前标签页重新查询
+  const refreshToken = useStore((s) => s.tableRefresh[`${conn.id}:${database}:${table}`]);
+  useEffect(() => {
+    if (refreshToken) void loadData();
+  }, [refreshToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (tab !== "ddl" || ddl) return;
     api

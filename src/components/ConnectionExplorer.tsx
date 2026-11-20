@@ -2,28 +2,33 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Archive,
   ChevronRight,
+  Copy,
   Database,
+  Download,
+  Eraser,
   Eye,
   FileCode2,
   FolderOpen,
   FunctionSquare,
+  Pencil,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Save,
   Table2,
   TerminalSquare,
   Trash2,
-  Download,
-  Power,
 } from "lucide-react";
 import { open as openFile, save as saveFile } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { cacheKey, dbCache, invalidateConnCache, tableCache } from "../explorerCache";
 import { useStore } from "../store";
-import type { BackupFile, Connection, RoutineInfo, TableInfo } from "../types";
+import type { BackupFile, ColumnInfo, Connection, RoutineInfo, TableInfo } from "../types";
 import { ContextMenu, type MenuItemSpec } from "./ui";
+import { TableDesignDialog } from "./TableDesignDialog";
+import { CopyTableDialog } from "./CopyTableDialog";
 import { confirmDialog } from "./confirm";
 import { connectTo, disconnectFrom } from "../actions";
 import {
@@ -165,45 +170,21 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
     [isConnected, conn, loadTables],
   );
 
-  /** 关闭数据库：收起、释放元数据；若该连接已没有打开的库，则顺带断开连接 */
+  /**
+   * 关闭数据库：按用户要求，这里关闭的是**这个数据库服务（整条连接）**，
+   * 而不只是收起当前这一个库。断开后会释放连接池/文件句柄，避免长时间占用连接。
+   */
   const closeDatabase = useCallback(
     async (database: string) => {
-      setOpened((s) => {
-        const next = { ...s, [database]: false };
-        const anyOpen = Object.entries(next).some(([k, v]) => v && k !== database);
-        if (!anyOpen) {
-          void disconnectFrom(conn.id).then(() =>
-            notify(`已关闭数据库 ${database} 并断开连接`, "ok"),
-          );
-        } else {
-          notify(`已关闭数据库 ${database}`, "ok");
-        }
-        return next;
-      });
-      // 清掉该库的元数据缓存，下次打开重新读取
-      tableCache.delete(cacheKey(conn.id, database));
-      setTables((s) => {
-        const next = { ...s };
-        delete next[database];
-        return next;
-      });
-      setRoutines((s) => {
-        const next = { ...s };
-        delete next[database];
-        return next;
-      });
-      setBackups((s) => {
-        const next = { ...s };
-        delete next[database];
-        return next;
-      });
-      setSections((s) => {
-        const next = { ...s };
-        for (const key of Object.keys(next)) {
-          if (key.startsWith(`${database}:`)) delete next[key];
-        }
-        return next;
-      });
+      setOpened({});
+      // 清掉该连接所有库的元数据缓存
+      invalidateConnCache(conn.id);
+      setTables({});
+      setRoutines({});
+      setBackups({});
+      setSections({});
+      await disconnectFrom(conn.id);
+      notify(`已关闭数据库服务连接（${database}）`, "ok");
     },
     [conn.id, notify],
   );
@@ -429,6 +410,160 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
+  // ---------- 表级操作 ----------
+
+  const [designTarget, setDesignTarget] = useState<{ db: string; table: string } | null>(null);
+  const [designColumns, setDesignColumns] = useState<ColumnInfo[]>([]);
+  const [copyTarget, setCopyTarget] = useState<{ db: string; table: string } | null>(null);
+
+  /** 打开「设计表」：先读取该表当前列结构 */
+  const openDesign = async (db: string, table: string) => {
+    try {
+      const cols = await api.columns(conn.id, db, table);
+      setDesignColumns(cols);
+      setDesignTarget({ db, table });
+    } catch (e) {
+      notify(`读取表结构失败：${e}`, "err");
+    }
+  };
+
+  const dropTable = async (db: string, table: string) => {
+    if (
+      !(await confirmDialog({
+        title: "删除表",
+        message: `确定删除表「${table}」？\n表结构与所有数据都会被删除，不可撤销。`,
+      }))
+    ) {
+      return;
+    }
+    try {
+      await api.dropTable(conn.id, db, table);
+      notify(`已删除表 ${table}`, "ok");
+      await refreshDatabase(db);
+    } catch (e) {
+      notify(`删除失败：${e}`, "err");
+    }
+  };
+
+  const clearTable = async (db: string, table: string, mode: "clear" | "truncate") => {
+    const isTruncate = mode === "truncate";
+    if (
+      !(await confirmDialog({
+        title: isTruncate ? "截断表" : "清空表",
+        message: isTruncate
+          ? `确定截断表「${table}」？\n会删除所有数据并重置自增计数，不可回滚。`
+          : `确定清空表「${table}」？\n会删除所有数据（DELETE，保留自增计数）。`,
+      }))
+    ) {
+      return;
+    }
+    try {
+      if (isTruncate) {
+        await api.truncateTable(conn.id, db, table);
+        notify(`已截断表 ${table}`, "ok");
+      } else {
+        const n = await api.clearTable(conn.id, db, table);
+        notify(`已清空表 ${table}（删除 ${n} 行）`, "ok");
+      }
+      useStore.getState().bumpTableRefresh(conn.id, db, table);
+    } catch (e) {
+      notify(`${isTruncate ? "截断" : "清空"}失败：${e}`, "err");
+    }
+  };
+
+  /** 转存为 SQL 文件：仅结构 / 结构 + 数据 */
+  const dumpTable = async (db: string, table: string, withData: boolean) => {
+    try {
+      const target = await saveFile({
+        defaultPath: `${table}-${withData ? "full" : "schema"}.sql`,
+        filters: [{ name: "SQL", extensions: ["sql"] }],
+      });
+      if (typeof target !== "string") return;
+      const res = await api.exportData({
+        connId: conn.id,
+        database: db,
+        tables: [table],
+        sql: null,
+        format: "sql",
+        filePath: target,
+        includeHeader: true,
+        delimiter: ",",
+        includeStructure: true,
+        includeData: withData,
+        nullAs: null,
+        batchSize: 1000,
+        singleFile: true,
+      });
+      notify(
+        withData
+          ? `已转存 ${table}（结构 + 数据，${res.rows} 行）→ ${res.filePath}`
+          : `已转存 ${table}（仅结构）→ ${res.filePath}`,
+        "ok",
+      );
+    } catch (e) {
+      notify(`转存失败：${e}`, "err");
+    }
+  };
+
+  const refreshTableData = async (db: string, table: string) => {
+    tableCache.delete(cacheKey(conn.id, db));
+    await loadTables(db, true);
+    useStore.getState().bumpTableRefresh(conn.id, db, table);
+    notify(`已刷新表 ${table}`, "ok");
+  };
+
+  /** 单表右键菜单：针对该表的操作 */
+  const tableMenu = (db: string, t: { name: string }): MenuItemSpec[] => [
+    {
+      label: "设计表",
+      icon: <Pencil size={13} />,
+      onClick: () => void openDesign(db, t.name),
+    },
+    {
+      label: "刷新表数据",
+      icon: <RefreshCw size={13} />,
+      onClick: () => void refreshTableData(db, t.name),
+    },
+    { separator: true, label: "s1" },
+    {
+      label: "复制表（仅结构）",
+      icon: <Copy size={13} />,
+      onClick: () => setCopyTarget({ db, table: t.name }),
+    },
+    {
+      label: "复制表（结构 + 数据）",
+      icon: <Copy size={13} />,
+      onClick: () => setCopyTarget({ db, table: t.name }),
+    },
+    {
+      label: "转存 SQL 文件（仅结构）",
+      icon: <Download size={13} />,
+      onClick: () => void dumpTable(db, t.name, false),
+    },
+    {
+      label: "转存 SQL 文件（结构 + 数据）",
+      icon: <Download size={13} />,
+      onClick: () => void dumpTable(db, t.name, true),
+    },
+    { separator: true, label: "s2" },
+    {
+      label: "清空表",
+      icon: <Eraser size={13} />,
+      onClick: () => void clearTable(db, t.name, "clear"),
+    },
+    {
+      label: "截断表",
+      icon: <Eraser size={13} />,
+      onClick: () => void clearTable(db, t.name, "truncate"),
+    },
+    {
+      label: "删除表",
+      icon: <Trash2 size={13} />,
+      danger: true,
+      onClick: () => void dropTable(db, t.name),
+    },
+  ];
+
   if (!isConnected) {
     return (
       <div className="sb-children">
@@ -514,12 +649,11 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
                         className={`sb-table ${sel?.kind === "table" && sel.db === db && sel.name === t.name ? "active" : ""}`}
                         onClick={() => setSel({ kind: "table", db, name: t.name })}
                         onDoubleClick={() => onOpenTable(db, t.name)}
-                        onContextMenu={(e) =>
-                          openMenuAt(e, newOnlyMenu(db, "新建表", () =>
-                            setScriptDialog({ database: db, title: "新建表", sql: tableTemplate("new_table") }),
-                          ))
-                        }
-                        title={`${t.name}（双击打开数据）`}
+                        onContextMenu={(e) => {
+                          setSel({ kind: "table", db, name: t.name });
+                          openMenuAt(e, tableMenu(db, t));
+                        }}
+                        title={`${t.name}（双击打开数据，右键表操作）`}
                       >
                         <span className="obj-ico">
                           <Table2 size={11} color="var(--text-3)" />
@@ -722,6 +856,27 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
             void loadRoutines(db);
             void loadBackups(db);
           }}
+        />
+      )}
+
+      {designTarget && (
+        <TableDesignDialog
+          conn={conn}
+          database={designTarget.db}
+          table={designTarget.table}
+          columns={designColumns}
+          onClose={() => setDesignTarget(null)}
+          onDone={() => void refreshDatabase(designTarget.db)}
+        />
+      )}
+
+      {copyTarget && (
+        <CopyTableDialog
+          conn={conn}
+          database={copyTarget.db}
+          table={copyTarget.table}
+          onClose={() => setCopyTarget(null)}
+          onDone={() => void refreshDatabase(copyTarget.db)}
         />
       )}
     </div>

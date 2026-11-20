@@ -120,6 +120,9 @@ interface Store {
 
   notify: (text: string, kind?: Toast["kind"]) => void;
   dismissToast: (id: number) => void;
+  /** 表数据刷新令牌：key = connId:db:table，值变化时打开中的表标签页会重新拉取数据 */
+  tableRefresh: Record<string, number>;
+  bumpTableRefresh: (connId: string, database: string, table: string) => void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -308,6 +311,13 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   dismissToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
+
+  tableRefresh: {},
+
+  bumpTableRefresh: (connId, database, table) => {
+    const key = `${connId}:${database}:${table}`;
+    set({ tableRefresh: { ...get().tableRefresh, [key]: Date.now() } });
+  },
 }));
 
 /** 连接前确保密码等字段完整 */

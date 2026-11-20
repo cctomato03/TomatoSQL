@@ -134,8 +134,46 @@ check(
 // ---------- 表 / 视图 右键只有"新建" ----------
 check("右键表", (await rightClick(".sb-table", "ui_users")) === "ok");
 await sleep(250);
-const tableMenu = await cdp.text(".menu");
-check("表菜单只有新建表", tableMenu.includes("新建表") && !tableMenu.includes("生成 SELECT") && !tableMenu.includes("导入数据"), tableMenu.replace(/\s+/g, " "));
+const tableMenu = await cdp.text(".menu").catch(() => "");
+const tableMenuTxt = typeof tableMenu === "string" ? tableMenu : "";
+check(
+  "表菜单是表级操作（设计/复制/转存/清空/截断/删除/刷新）",
+  ["设计表", "刷新表数据", "复制表（仅结构）", "复制表（结构 + 数据）", "转存 SQL 文件（仅结构）",
+   "转存 SQL 文件（结构 + 数据）", "清空表", "截断表", "删除表"].every((k) => tableMenuTxt.includes(k)),
+  tableMenuTxt.replace(/\s+/g, " "),
+);
+check("表菜单不再是「新建表」", !tableMenuTxt.includes("新建表"));
+
+// 设计表：打开弹窗看列，再关闭
+check("点击设计表", (await cdp.clickIn(".menu", "设计表")) === "ok");
+check("设计表弹窗", await cdp.waitFor(async () => (await cdp.text(".dialog-head .dialog-title")).includes("设计表"), 10000, "设计表"));
+check("弹窗列出已有列", (await cdp.text(".dialog")).includes("name"), (await cdp.text(".dialog")).slice(0, 80));
+check("关闭设计表", (await cdp.clickIn(".dialog-foot", "取消")) === "ok");
+await cdp.waitFor(async () => (await cdp.count(".dialog")) === 0, 6000, "关闭");
+
+// 复制表（仅结构）
+check("右键表→复制表（仅结构）", (await rightClick(".sb-table", "ui_users")) === "ok");
+await sleep(250);
+check("点击复制表", (await cdp.clickIn(".menu", "复制表（仅结构）")) === "ok");
+check("复制表弹窗", await cdp.waitFor(async () => (await cdp.text(".dialog-head .dialog-title")).includes("复制表"), 8000, "复制表"));
+check("填写新表名", (await cdp.setByIndex(".dialog input", 0, "ui_users_copy")) === "ok");
+check("执行复制", (await cdp.clickIn(".dialog-foot", "复制")) === "ok");
+check(
+  "复制出的表出现在左栏",
+  await cdp.waitFor(async () => (await cdp.text(".sidebar")).includes("ui_users_copy"), 15000, "新表"),
+  (await cdp.text(".sidebar")).replace(/\s+/g, " ").slice(-80),
+);
+
+// 删除表（删掉刚才的副本）
+check("右键副本→删除表", (await rightClick(".sb-table", "ui_users_copy")) === "ok");
+await sleep(250);
+check("点击删除表", (await cdp.clickIn(".menu", "删除表")) === "ok");
+check("确认删除表", await cdp.waitFor(async () => (await cdp.text(".dialog-head .dialog-title")).includes("删除表"), 8000, "确认"));
+check("确认", (await cdp.clickIn(".dialog-foot", "确定")) === "ok");
+check(
+  "副本已消失",
+  await cdp.waitFor(async () => !(await cdp.text(".sidebar")).includes("ui_users_copy"), 15000, "已删除"),
+);
 await closeMenu();
 
 await cdp.eval(

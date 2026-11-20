@@ -177,6 +177,185 @@ pub fn db_touch_sqlite_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------- 表级操作 ----------------
+
+#[tauri::command]
+pub async fn db_drop_table(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+) -> Result<(), String> {
+    let conn = state.conn(&conn_id)?;
+    let sql = format!(
+        "DROP TABLE IF EXISTS {}",
+        crate::db::qualified(conn.engine(), &database, &table)
+    );
+    conn.exec_sql(&database, &sql).await?;
+    Ok(())
+}
+
+/// 清空表：DELETE FROM（保留自增计数，可回滚）
+#[tauri::command]
+pub async fn db_clear_table(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+) -> Result<i64, String> {
+    let conn = state.conn(&conn_id)?;
+    let sql = format!(
+        "DELETE FROM {}",
+        crate::db::qualified(conn.engine(), &database, &table)
+    );
+    conn.exec_sql(&database, &sql).await
+}
+
+/// 截断表：MySQL 用 TRUNCATE（并重置自增），SQLite 用 DELETE + 重置 sqlite_sequence
+#[tauri::command]
+pub async fn db_truncate_table(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+) -> Result<(), String> {
+    let conn = state.conn(&conn_id)?;
+    let engine = conn.engine();
+    let q = crate::db::qualified(engine, &database, &table);
+    if engine == "mysql" {
+        conn.exec_sql(&database, &format!("TRUNCATE TABLE {q}"))
+            .await?;
+    } else {
+        conn.exec_sql(&database, &format!("DELETE FROM {q}")).await?;
+        let _ = conn
+            .exec_sql(
+                &database,
+                &format!(
+                    "DELETE FROM sqlite_sequence WHERE name = '{}'",
+                    table.replace('\'', "''")
+                ),
+            )
+            .await;
+    }
+    Ok(())
+}
+
+/// 复制表：仅结构 / 结构 + 数据
+#[tauri::command]
+pub async fn db_copy_table(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+    new_name: String,
+    with_data: bool,
+) -> Result<(), String> {
+    let conn = state.conn(&conn_id)?;
+    let engine = conn.engine();
+    let safe = safe_ident(new_name.trim());
+    if safe.is_empty() {
+        return Err("新表名不合法".into());
+    }
+    if safe == table {
+        return Err("新表名不能与原表相同".into());
+    }
+    let src = crate::db::qualified(engine, &database, &table);
+    let dst = crate::db::qualified(engine, &database, &safe);
+    let exists = conn
+        .tables(&database)
+        .await?
+        .iter()
+        .any(|t| t.name.eq_ignore_ascii_case(&safe));
+    if exists {
+        return Err(format!("表 {safe} 已存在"));
+    }
+    if engine == "mysql" {
+        conn.exec_sql(&database, &format!("CREATE TABLE {dst} LIKE {src}"))
+            .await?;
+        if with_data {
+            conn.exec_sql(&database, &format!("INSERT INTO {dst} SELECT * FROM {src}"))
+                .await?;
+        }
+    } else {
+        let select = if with_data {
+            format!("SELECT * FROM {src}")
+        } else {
+            format!("SELECT * FROM {src} WHERE 1 = 0")
+        };
+        conn.exec_sql(&database, &format!("CREATE TABLE {dst} AS {select}"))
+            .await?;
+    }
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesignChange {
+    #[serde(default)]
+    pub added: Vec<ColumnInfo>,
+    #[serde(default)]
+    pub dropped: Vec<String>,
+    /// 需要修改类型/可空性的列（仅 MySQL 支持）
+    #[serde(default)]
+    pub modified: Vec<ColumnInfo>,
+}
+
+/// 设计表：按差异生成 ALTER TABLE 并执行
+#[tauri::command]
+pub async fn db_apply_table_design(
+    state: State<'_, AppState>,
+    conn_id: String,
+    database: String,
+    table: String,
+    change: DesignChange,
+) -> Result<Vec<String>, String> {
+    let conn = state.conn(&conn_id)?;
+    let engine = conn.engine();
+    let mut executed: Vec<String> = Vec::new();
+
+    if change.added.is_empty() && change.dropped.is_empty() && change.modified.is_empty() {
+        return Err("没有要应用的修改".into());
+    }
+
+    for col in &change.added {
+        let sql = crate::db::ddl::add_column(engine, engine, &table, col);
+        conn.exec_sql(&database, &sql).await?;
+        executed.push(sql);
+    }
+    for name in &change.dropped {
+        let sql = format!(
+            "ALTER TABLE {} DROP COLUMN {}",
+            crate::db::qualified(engine, &database, &table),
+            crate::db::quote_ident(engine, name)
+        );
+        conn.exec_sql(&database, &sql).await?;
+        executed.push(sql);
+    }
+    if !change.modified.is_empty() {
+        if engine == "sqlite" {
+            return Err("SQLite 不支持修改已有列的类型/可空性（已完成的增删列已生效）".into());
+        }
+        for col in &change.modified {
+            let ty = if col.data_type.trim().is_empty() { "TEXT".to_string() } else { col.data_type.clone() };
+            let mut sql = format!(
+                "ALTER TABLE {} MODIFY COLUMN {} {}",
+                crate::db::qualified(engine, &database, &table),
+                crate::db::quote_ident(engine, &col.name),
+                ty
+            );
+            if !col.nullable {
+                sql.push_str(" NOT NULL");
+            }
+            if let Some(def) = col.default_value.as_ref().filter(|d| !d.is_empty()) {
+                sql.push_str(&format!(" DEFAULT {def}"));
+            }
+            conn.exec_sql(&database, &sql).await?;
+            executed.push(sql);
+        }
+    }
+    Ok(executed)
+}
+
 // ---------------- 备份 ----------------
 
 #[tauri::command]

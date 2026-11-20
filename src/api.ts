@@ -62,6 +62,27 @@ export const api = {
   dropDatabase: (connId: string, name: string) =>
     call<void>("db_drop_database", { connId, name }),
   touchSqliteDb: (path: string) => call<void>("db_touch_sqlite_file", { path }),
+
+  // 表级操作
+  dropTable: (connId: string, database: string, table: string) =>
+    call<void>("db_drop_table", { connId, database, table }),
+  clearTable: (connId: string, database: string, table: string) =>
+    call<number>("db_clear_table", { connId, database, table }),
+  truncateTable: (connId: string, database: string, table: string) =>
+    call<void>("db_truncate_table", { connId, database, table }),
+  copyTable: (
+    connId: string,
+    database: string,
+    table: string,
+    newName: string,
+    withData: boolean,
+  ) => call<void>("db_copy_table", { connId, database, table, newName, withData }),
+  applyTableDesign: (
+    connId: string,
+    database: string,
+    table: string,
+    change: { added: ColumnInfo[]; dropped: string[]; modified: ColumnInfo[] },
+  ) => call<string[]>("db_apply_table_design", { connId, database, table, change }),
   ddl: (connId: string, database: string, table: string) =>
     call<string>("db_ddl", { connId, database, table }),
   rowCount: (connId: string, database: string, table: string) =>

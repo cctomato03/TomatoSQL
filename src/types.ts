@@ -180,6 +180,8 @@ export interface ExportRequest {
   includeData: boolean;
   nullAs?: string | null;
   batchSize: number;
+  /** 多表导出时强制写入同一个文件（表转存 / 整库备份用） */
+  singleFile?: boolean;
 }
 
 export interface ExportResult {

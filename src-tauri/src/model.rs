@@ -250,17 +250,25 @@ pub struct TableInfo {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnInfo {
     pub name: String,
+    #[serde(default)]
     pub data_type: String,
+    #[serde(default)]
     pub nullable: bool,
+    #[serde(default)]
     pub key: String,
+    #[serde(default)]
     pub default_value: Option<String>,
+    #[serde(default)]
     pub extra: String,
+    #[serde(default)]
     pub comment: Option<String>,
+    #[serde(default)]
     pub position: i64,
+    #[serde(default)]
     pub length: Option<i64>,
 }
 
