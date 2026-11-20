@@ -94,6 +94,14 @@ check("双击数据库打开", (await cdp.doubleClick(".sb-db", "main")) === "ok
 const opened = await cdp.waitFor(async () => (await cdp.count(".sb-section")) === 5, 15000, "五个分组");
 check("双击后打开（5 个分组）", opened, `${await cdp.count(".sb-section")} 个分组`);
 
+// 已打开的库：单击可收起 / 展开层级
+check("单击已打开的库→收起层级", (await cdp.clickSel(".sb-db", "main")) === "ok");
+await sleep(400);
+check("子级已收起（0 个分组）", (await cdp.count(".sb-section")) === 0, `${await cdp.count(".sb-section")} 个分组`);
+check("收起后仍在打开状态（库仍在列表）", (await cdp.count(".sb-db")) >= 1);
+check("再次单击→展开层级", (await cdp.clickSel(".sb-db", "main")) === "ok");
+check("子级已展开（5 个分组）", await cdp.waitFor(async () => (await cdp.count(".sb-section")) === 5, 10000, "展开"));
+
 check("右键数据库", (await rightClick(".sb-db", "main")) === "ok");
 await sleep(300);
 const dbMenu = await cdp.text(".menu");
@@ -221,20 +229,24 @@ check("点击创建", (await cdp.clickIn(".dialog-foot", "创建")) === "ok");
 check("创建成功提示", await cdp.waitFor(async () => (await cdp.text(".toasts")).includes("SQLite 数据库"), 15000, "toast"));
 check("文件已生成", existsSync(newDbPath), newDbPath);
 
-// ---------- 关闭数据库会断开连接 ----------
+// ---------- 关闭数据库只关闭该库，连接保持 ----------
 check("右键数据库→关闭数据库", (await rightClick(".sb-db", "main")) === "ok");
 await sleep(250);
 check("点击关闭数据库", (await cdp.clickIn(".menu", "关闭数据库")) === "ok");
 check(
-  "关闭后连接断开（状态栏 0 个连接）",
-  await cdp.waitFor(async () => (await cdp.text(".statusbar")).includes("0 个连接已打开"), 10000, "断开"),
+  "该库已关闭（无分组）",
+  await cdp.waitFor(async () => (await cdp.count(".sb-section")) === 0, 10000, "库已关闭"),
+  `${await cdp.count(".sb-section")} 个分组`,
+);
+check(
+  "连接仍然保持（仍显示 1 个连接）",
+  await cdp.waitFor(async () => (await cdp.text(".statusbar")).includes("1 个连接已打开"), 8000, "连接保持"),
   (await cdp.text(".statusbar")).slice(0, 40),
 );
 
 // ---------- 重新打开，验证数据网格与筛选排序 ----------
-check("双击连接重新打开", (await cdp.doubleClick(".tree-row", "UI 测试库")) === "ok");
-await cdp.waitFor(async () => (await cdp.count(".sb-db")) > 0, 20000, "库节点");
-check("双击打开数据库", (await cdp.doubleClick(".sb-db", "main")) === "ok");
+// 连接没断，直接双击该库重新打开即可
+check("双击库重新打开", (await cdp.doubleClick(".sb-db", "main")) === "ok");
 await cdp.waitFor(async () => (await cdp.count(".sb-section")) === 5, 15000, "分组");
 await cdp.eval(
   `(() => { const s=[...document.querySelectorAll('.sb-section')].find(e=>e.textContent.includes('表')); s?.click(); return 'ok'; })()`,

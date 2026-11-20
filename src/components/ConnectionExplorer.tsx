@@ -64,6 +64,8 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
 
   const [dbs, setDbs] = useState<string[]>(() => dbCache.get(conn.id) ?? []);
   const [opened, setOpened] = useState<Record<string, boolean>>({});
+  /** 已打开的库：子级是否收起（单击库名切换） */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [sections, setSections] = useState<Record<string, boolean>>({});
   const [tables, setTables] = useState<Record<string, TableInfo[]>>({});
   const [routines, setRoutines] = useState<Record<string, RoutineInfo[]>>({});
@@ -165,29 +167,53 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
         if (!ok) return;
       }
       setOpened((s) => ({ ...s, [database]: true }));
+      setCollapsed((s) => ({ ...s, [database]: false }));
       void loadTables(database);
     },
     [isConnected, conn, loadTables],
   );
 
   /**
-   * 关闭数据库：按用户要求，这里关闭的是**这个数据库服务（整条连接）**，
-   * 而不只是收起当前这一个库。断开后会释放连接池/文件句柄，避免长时间占用连接。
+   * 关闭数据库：只关闭**当前这一个库**（释放它的元数据），
+   * 连接保持，其它库仍可继续操作；需要重新双击该库才会再次打开。
    */
   const closeDatabase = useCallback(
     async (database: string) => {
-      setOpened({});
-      // 清掉该连接所有库的元数据缓存
-      invalidateConnCache(conn.id);
-      setTables({});
-      setRoutines({});
-      setBackups({});
-      setSections({});
-      await disconnectFrom(conn.id);
-      notify(`已关闭数据库服务连接（${database}）`, "ok");
+      setOpened((s) => ({ ...s, [database]: false }));
+      setCollapsed((s) => ({ ...s, [database]: false }));
+      // 只清掉这个库的缓存
+      tableCache.delete(cacheKey(conn.id, database));
+      setTables((s) => {
+        const next = { ...s };
+        delete next[database];
+        return next;
+      });
+      setRoutines((s) => {
+        const next = { ...s };
+        delete next[database];
+        return next;
+      });
+      setBackups((s) => {
+        const next = { ...s };
+        delete next[database];
+        return next;
+      });
+      setSections((s) => {
+        const next = { ...s };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${database}:`)) delete next[key];
+        }
+        return next;
+      });
+      notify(`已关闭数据库 ${database}（连接保持）`, "ok");
     },
     [conn.id, notify],
   );
+
+  /** 已打开的库：单击收起 / 展开它下面的层级 */
+  const toggleDbChildren = useCallback((database: string) => {
+    setCollapsed((s) => ({ ...s, [database]: !s[database] }));
+  }, []);
 
   const refreshDatabase = async (database: string) => {
     tableCache.delete(cacheKey(conn.id, database));
@@ -619,12 +645,23 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
               className={`sb-db ${isOpen ? "opened" : ""} ${
                 sel?.kind === "db" && sel.db === db ? "active" : ""
               }`}
-              onClick={() => setSel({ kind: "db", db })}
+              onClick={() => {
+                setSel({ kind: "db", db });
+                // 已打开的库：单击即收起/展开它下面的层级
+                if (isOpen) toggleDbChildren(db);
+              }}
               onDoubleClick={() => void (isOpen ? closeDatabase(db) : openDatabase(db))}
               onContextMenu={(e) => openMenuAt(e, dbMenu(db))}
-              title={`${db}（单击选中，双击打开/关闭，右键更多操作）`}
+              title={
+                isOpen
+                  ? `${db}（单击收起/展开层级，双击关闭，右键更多操作）`
+                  : `${db}（单击选中，双击打开，右键更多操作）`
+              }
             >
-              <span className={`obj-chev ${isOpen ? "open" : ""}`} style={{ width: "0.8rem" }}>
+              <span
+                className={`obj-chev ${isOpen && !collapsed[db] ? "open" : ""}`}
+                style={{ width: "0.8rem" }}
+              >
                 <ChevronRight size={12} />
               </span>
               <span className="obj-ico">
@@ -636,7 +673,7 @@ export function ConnectionExplorer({ conn, onOpenTable, onOpenQuery }: Props) {
               </span>
             </div>
 
-            {isOpen && (
+            {isOpen && !collapsed[db] && (
               <div className="sb-children">
                 {sectionHead(db, "tables", "表", <Table2 size={11} color="var(--text-3)" />, tableList.length,
                   () => setScriptDialog({ database: db, title: "新建表", hint: "按需修改建表语句后执行", sql: tableTemplate("new_table") }),
